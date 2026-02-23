@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { seriesAPI, videoAPI } from "../api/api";
-import toast, { Toaster } from "react-hot-toast";
+import toast from "react-hot-toast";
 import { ArrowLeft, Image, Layers, Loader, Plus, Save, Trash2, X } from "lucide-react";
 
 // mode: 'create' | 'edit'
@@ -27,30 +27,6 @@ function CreateSeries({ mode = 'create' }) {
     const [thumbnailFile, setThumbnailFile] = useState(null);
     const [thumbnailPreview, setThumbnailPreview] = useState(null);
 
-    const [tagInput, setTagInput] = useState("");
-    const [studioInput, setStudioInput] = useState("");
-    const [actorInput, setActorInput] = useState("");
-    const [characterInput, setCharacterInput] = useState("");
-
-    const [availableTags, setAvailableTags] = useState([]);
-    const [availableStudios, setAvailableStudios] = useState([]);
-    const [availableActors, setAvailableActors] = useState([]);
-
-    const fetchMeta = useCallback(async () => {
-        try {
-            const [tags, studios, actors] = await Promise.all([
-                videoAPI.getTags(),
-                videoAPI.getStudios(),
-                videoAPI.getActors()
-            ]);
-            setAvailableTags(tags);
-            setAvailableStudios(studios);
-            setAvailableActors(actors);
-        } catch (_) {}
-    }, []);
-
-    useEffect(() => { fetchMeta(); }, [fetchMeta]);
-
     useEffect(() => {
         if (mode !== 'edit' || !id) return;
         (async () => {
@@ -61,10 +37,6 @@ function CreateSeries({ mode = 'create' }) {
                 setFormData({
                     title: s.title || "",
                     description: s.description || "",
-                    tags: s.tags || [],
-                    studios: s.studios || [],
-                    actors: s.actors || [],
-                    characters: s.characters || [],
                     year: s.year || new Date().getFullYear()
                 });
                 if (s.thumbnailPath) {
@@ -109,43 +81,61 @@ function CreateSeries({ mode = 'create' }) {
         }
 
         setSaving(true);
-        try {
-            const data = new FormData();
-            data.append('title', formData.title.trim());
-            data.append('description', formData.description || "");
-            data.append('tags', JSON.stringify(formData.tags));
-            data.append('studios', JSON.stringify(formData.studios));
-            data.append('actors', JSON.stringify(formData.actors));
-            data.append('characters', JSON.stringify(formData.characters));
-            if (formData.year) data.append('year', formData.year);
-            if (thumbnailFile) data.append('thumbnail', thumbnailFile);
 
-            if (mode === 'edit') {
-                const result = await seriesAPI.updateSeries(id, data);
-                toast.success("Series updated successfully");
-                setTimeout(() => navigate(`/series/${id}`), 800);
-            } else {
-                const result = await seriesAPI.createSeries(data);
-                toast.success("Series created! You can now add episodes.");
-                setTimeout(() => navigate(`/series/${result.series._id}`), 800);
-            }
-        } catch (error) {
-            console.error("Error saving series:", error);
-            toast.error(error.response?.data?.error || "Failed to save series");
-        } finally {
-            setSaving(false);
+        const data = new FormData();
+        data.append('title', formData.title.trim());
+        data.append('description', formData.description || "");
+        data.append('tags', JSON.stringify(formData.tags));
+        data.append('studios', JSON.stringify(formData.studios));
+        data.append('actors', JSON.stringify(formData.actors));
+        data.append('characters', JSON.stringify(formData.characters));
+        if (formData.year) data.append('year', formData.year);
+        if (thumbnailFile) data.append('thumbnail', thumbnailFile);
+
+        if (mode === 'edit') {
+            toast.promise(seriesAPI.updateSeries(id, data).then((res) => {
+                if (res?.success) {
+                    settimeout(() => navigate(`/series/${res.series._id}`), 800);
+                    return res;
+                } else {
+                    throw new Error("Failed to update series");
+                }
+            }).finally(() => setSaving(false)), {
+                loading: "Updating series...",
+                success: "Series updated!",
+                error: "Failed to update series"
+            });
+        } else {
+            toast.promise(seriesAPI.createSeries(data).then((res) => {
+                if (res?.success) {
+                    settimeout(() => navigate(`/series/${res.series._id}`), 800);
+                    return res;
+                } else {
+                    throw new Error("Failed to create series");
+                }
+            }).finally(() => setSaving(false)), {
+                loading: "Creating series...",
+                success: "Series created! You can now add episodes.",
+                error: "Failed to create series"
+            });
         }
     };
 
     const handleDelete = async () => {
         if (!window.confirm("Delete this entire series and all its episodes? This cannot be undone.")) return;
-        try {
-            await seriesAPI.deleteSeries(id);
-            toast.success("Series deleted");
-            navigate('/');
-        } catch (error) {
-            toast.error("Failed to delete series");
-        }
+
+        toast.promise(seriesAPI.deleteSeries(id).then((res) => {
+            if (res?.success) {
+                navigate('/');
+                return "Series deleted";
+            } else {
+                throw new Error("Failed to delete series");
+            }
+        }), {
+            loading: "Deleting series...",
+            success: "Series deleted",
+            error: "Failed to delete series"
+        });
     };
 
     if (pageLoading) {
@@ -158,8 +148,6 @@ function CreateSeries({ mode = 'create' }) {
 
     return (
         <div className="min-h-screen bg-slate-950 text-white">
-            <Toaster position="top-right" />
-
             {/* Header */}
             <header className="sticky top-0 z-30 bg-slate-950/95 backdrop-blur-sm border-b border-slate-800">
                 <div className="container mx-auto p-4">
@@ -285,58 +273,6 @@ function CreateSeries({ mode = 'create' }) {
                         </div>
                     </div>
 
-                    {/* Tags */}
-                    <TagSection
-                        title="Tags"
-                        inputValue={tagInput}
-                        setInputValue={setTagInput}
-                        items={formData.tags}
-                        suggestions={availableTags}
-                        datalistId="tags-datalist"
-                        placeholder="Add tag"
-                        onAdd={() => addItem('tags', tagInput, setTagInput)}
-                        onRemove={(v) => removeItem('tags', v)}
-                    />
-
-                    {/* Studios */}
-                    <TagSection
-                        title="Studios"
-                        inputValue={studioInput}
-                        setInputValue={setStudioInput}
-                        items={formData.studios}
-                        suggestions={availableStudios}
-                        datalistId="studios-datalist"
-                        placeholder="Add studio"
-                        onAdd={() => addItem('studios', studioInput, setStudioInput)}
-                        onRemove={(v) => removeItem('studios', v)}
-                    />
-
-                    {/* Actors */}
-                    <TagSection
-                        title="Actors"
-                        inputValue={actorInput}
-                        setInputValue={setActorInput}
-                        items={formData.actors}
-                        suggestions={availableActors}
-                        datalistId="actors-datalist"
-                        placeholder="Add actor"
-                        onAdd={() => addItem('actors', actorInput, setActorInput)}
-                        onRemove={(v) => removeItem('actors', v)}
-                    />
-
-                    {/* Characters */}
-                    <TagSection
-                        title="Characters"
-                        inputValue={characterInput}
-                        setInputValue={setCharacterInput}
-                        items={formData.characters}
-                        suggestions={[]}
-                        datalistId={null}
-                        placeholder="Add character"
-                        onAdd={() => addItem('characters', characterInput, setCharacterInput)}
-                        onRemove={(v) => removeItem('characters', v)}
-                    />
-
                     {/* Action buttons */}
                     <div className="flex gap-4">
                         <button
@@ -362,51 +298,6 @@ function CreateSeries({ mode = 'create' }) {
                     </div>
                 </div>
             </main>
-        </div>
-    );
-}
-
-function TagSection({ title, inputValue, setInputValue, items, suggestions, datalistId, placeholder, onAdd, onRemove }) {
-    return (
-        <div className="bg-slate-900 rounded-lg p-6 border border-slate-800">
-            <h2 className="text-xl font-semibold mb-4">{title}</h2>
-            <div className="space-y-3">
-                <div className="flex gap-2">
-                    <input
-                        type="text"
-                        value={inputValue}
-                        onChange={(e) => setInputValue(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), onAdd())}
-                        className="flex-1 px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500"
-                        placeholder={placeholder}
-                        list={datalistId || undefined}
-                    />
-                    {datalistId && suggestions.length > 0 && (
-                        <datalist id={datalistId}>
-                            {suggestions.map((s, i) => <option key={i} value={s} />)}
-                        </datalist>
-                    )}
-                    <button
-                        type="button"
-                        onClick={onAdd}
-                        className="px-4 py-2 bg-red-500 hover:bg-red-600 rounded-lg transition"
-                    >
-                        <Plus className="w-5 h-5" />
-                    </button>
-                </div>
-                {items.length > 0 && (
-                    <div className="flex flex-wrap gap-2">
-                        {items.map((item, i) => (
-                            <span key={i} className="flex items-center gap-2 px-3 py-1 bg-slate-800 rounded-full text-sm">
-                                {item}
-                                <button type="button" onClick={() => onRemove(item)} className="hover:text-red-500 transition">
-                                    <X className="w-4 h-4" />
-                                </button>
-                            </span>
-                        ))}
-                    </div>
-                )}
-            </div>
         </div>
     );
 }

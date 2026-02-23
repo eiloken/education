@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import { generalAPI } from "../api/api";
 import { Film, Heart, Layers, Play, Star } from "lucide-react";
 
@@ -83,10 +83,10 @@ function SeriesCard({ series, viewMode = "grid", onClick, onToggleFavorite, onTa
                         <p className="text-slate-400 text-sm line-clamp-2">{description}</p>
                     )}
 
-                    <TagsContainer tags={studios} onClick={handleStudioClick} />
-                    <TagsContainer tags={tags} onClick={handleTagClick} />
-                    <TagsContainer tags={characters} onClick={handleCharacterClick} />
-                    <TagsContainer tags={actors} onClick={handleActorClick} />
+                    <TagsContainer tags={studios} color="blue" onClick={handleStudioClick} limit={5} />
+                    <TagsContainer tags={actors} color="green" onClick={handleActorClick} limit={5} />
+                    <TagsContainer tags={characters} color="purple" onClick={handleCharacterClick} limit={5} />
+                    <TagsContainer tags={tags} color="slate" onClick={handleTagClick} limit={10} />
                 </div>
             </div>
         );
@@ -135,7 +135,7 @@ function SeriesCard({ series, viewMode = "grid", onClick, onToggleFavorite, onTa
                 {/* Favorite button */}
                 <button
                     onClick={(e) => { e.stopPropagation(); onToggleFavorite && onToggleFavorite(e); }}
-                    className="absolute top-2 right-2 p-1.5 bg-black/60 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                    className="absolute top-2 right-2 p-1.5 bg-black/60 rounded-full transition-opacity"
                 >
                     <Heart
                         className={`w-4 h-4 transition ${isFavorite ? 'text-red-500' : 'text-white'}`}
@@ -162,30 +162,56 @@ function SeriesCard({ series, viewMode = "grid", onClick, onToggleFavorite, onTa
                     {year && <span>{year}</span>}
                 </div>
 
-                <TagsContainer tags={studios} onClick={handleStudioClick} />
-                <TagsContainer tags={tags} onClick={handleTagClick} />
-                <TagsContainer tags={characters} onClick={handleCharacterClick} />
-                <TagsContainer tags={actors} onClick={handleActorClick} />
+                <TagsContainer tags={studios} color="blue" onClick={handleStudioClick} limit={5} />
+                <TagsContainer tags={actors} color="green" onClick={handleActorClick} limit={5} />
+                <TagsContainer tags={characters} color="purple" onClick={handleCharacterClick} limit={5} />
+                <TagsContainer tags={tags} color="slate" onClick={handleTagClick} limit={10} />
             </div>
         </div>
     );
 }
 
-export function TagsContainer({ tags, onClick }) {
+export function TagsContainer({ tags, color, onClick, limit }) {
+    const [showMore, setShowMore] = useState(false);
+
+    const remaining = showMore ? 0 : (tags && limit && limit > 0 && tags.length > limit) ? tags.length - limit : 0;
+    const newLimit = showMore ? tags.length : limit;
+
+    const handleShowMore = (_, e) => {
+        e.stopPropagation();
+        setShowMore(true);
+    };
+
     return (
         tags && tags.length > 0 && (
             <div className="flex flex-wrap gap-1 mt-2">
-                {tags.map((tag, i) => (
-                    <button 
-                        onClick={(e) => onClick?.(tag, e)}
-                        key={i} 
-                        className="px-2 py-0.5 bg-slate-800 text-slate-300 text-xs rounded cursor-pointer hover:bg-slate-700 transition"
-                    >
-                        {tag}
-                    </button>
-                ))}
+                <>
+                    {(remaining > 0 ? tags.slice(0, newLimit) : tags).map((tag, i) => (
+                        <MetaChip key={i} label={tag} color={color} onClick={onClick} />
+                    ))}
+                    {remaining > 0 && <MetaChip label={`+${remaining}`} color={color} onClick={handleShowMore} />}
+                </>
+                
             </div>
         )
+    );
+}
+
+export function MetaChip({ label, color = 'slate', onClick }) {
+    const colors = {
+        slate: 'bg-slate-700 text-slate-300',
+        blue: 'bg-blue-500/20 text-blue-300',
+        green: 'bg-green-500/20 text-green-300',
+        purple: 'bg-purple-500/20 text-purple-300',
+        red: 'bg-red-500/20 text-red-300',
+    };
+    return (
+        <button 
+            onClick={(e) => onClick?.(label, e)}
+            className={`px-2 py-0.5 ${colors[color || 'slate']} text-xs rounded-full cursor-pointer hover:bg-slate-700 transition`}
+        >
+            {label}
+        </button>
     );
 }
 

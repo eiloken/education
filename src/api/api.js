@@ -1,6 +1,6 @@
 import axios from "axios";
 
-const API_URL = ""; // "http://localhost:5000";
+const API_URL = "http://localhost:5000";
 
 export const generalAPI = {
     health: async () => {
@@ -116,19 +116,19 @@ export const seriesAPI = {
     thumbnailUrl: (fileName) => generalAPI.thumbnailUrl(fileName),
     // Metadata
     getTags: async (serialId) => {
-        const response = await axios.get(`${API_URL}/api/series/metadata/${serialId}tags`);
+        const response = await axios.get(`${API_URL}/api/series/metadata/${serialId}/tags`);
         return response.data;
     },
     getStudios: async (serialId) => {
-        const response = await axios.get(`${API_URL}/api/series/metadata/${serialId}studios`);
+        const response = await axios.get(`${API_URL}/api/series/metadata/${serialId}/studios`);
         return response.data;
     },
     getActors: async (serialId) => {
-        const response = await axios.get(`${API_URL}/api/series/metadata/${serialId}actors`);
+        const response = await axios.get(`${API_URL}/api/series/metadata/${serialId}/actors`);
         return response.data;
     },
     getCharacters: async (serialId) => {
-        const response = await axios.get(`${API_URL}/api/series/metadata/${serialId}characters`);
+        const response = await axios.get(`${API_URL}/api/series/metadata/${serialId}/characters`);
         return response.data;
     }
 };

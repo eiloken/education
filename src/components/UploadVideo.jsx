@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { seriesAPI, videoAPI } from "../api/api";
-import toast, { Toaster } from "react-hot-toast";
+import toast from "react-hot-toast";
 import { ArrowLeft, Film, Layers, Loader, Plus, RefreshCw, Upload, X } from "lucide-react";
 
 // mode: 'new' | 'add-episode' | 'edit'
@@ -48,11 +48,12 @@ function UploadVideo({ mode = 'new' }) {
     const fetchMetaData = useCallback(async () => {
         try {
             const [tags, studios, actors, seriesData] = await Promise.all([
-                seriesAPI.getTags(seriesIdParam),
-                seriesAPI.getStudios(seriesIdParam),
-                seriesAPI.getActors(seriesIdParam),
+                videoAPI.getTags(),
+                videoAPI.getStudios(),
+                videoAPI.getActors(),
                 seriesAPI.getSeries({ limit: 1000 })
             ]);
+
             setAvailableTags(tags);
             setAvailableStudios(studios);
             setAvailableActors(actors);
@@ -145,8 +146,14 @@ function UploadVideo({ mode = 'new' }) {
         }
     };
 
-    const removeItem = (field, valueToRemove) => {
-        setFormData(prev => ({ ...prev, [field]: prev[field].filter(v => v !== valueToRemove) }));
+    const toggleItem = (field, item) => {
+        const trimmed = item.trim();
+        if (trimmed) {
+            setFormData(prev => ({
+                ...prev,
+                [field]: prev[field].includes(trimmed) ? prev[field].filter(i => i !== trimmed) : [...prev[field], trimmed]
+            }));
+        }
     };
 
     // When selecting a series in 'new' mode, auto-fill episode number
@@ -190,79 +197,105 @@ function UploadVideo({ mode = 'new' }) {
             setUploadProgress(Math.round((progressEvent.loaded * 100) / progressEvent.total));
         };
 
-        try {
-            if (mode === 'edit' && !replaceVideo) {
-                const meta = {
-                    title: formData.title,
-                    description: formData.description,
-                    tags: formData.tags,
-                    studios: formData.studios,
-                    actors: formData.actors,
-                    characters: formData.characters,
-                    year: formData.year ? parseInt(formData.year) : null,
-                    seriesId: assignToSeries ? (formData.seriesId || null) : null,
-                    episodeNumber: assignToSeries ? (formData.episodeNumber ? parseInt(formData.episodeNumber) : null) : null,
-                    seasonNumber: assignToSeries ? (formData.seasonNumber ? parseInt(formData.seasonNumber) : null) : null
-                };
-                await videoAPI.updateVideo(id, meta);
-                toast.success("Video updated successfully");
-                const backUrl = existingVideo?.seriesId ? `/series/${existingVideo.seriesId?._id || existingVideo.seriesId}` : `/video/${id}`;
-                setTimeout(() => navigate(backUrl), 800);
+        if (mode === 'edit' && !replaceVideo) {
+            const meta = {
+                title: formData.title,
+                description: formData.description,
+                tags: formData.tags,
+                studios: formData.studios,
+                actors: formData.actors,
+                characters: formData.characters,
+                year: formData.year ? parseInt(formData.year) : null,
+                seriesId: assignToSeries ? (formData.seriesId || null) : null,
+                episodeNumber: assignToSeries ? (formData.episodeNumber ? parseInt(formData.episodeNumber) : null) : null,
+                seasonNumber: assignToSeries ? (formData.seasonNumber ? parseInt(formData.seasonNumber) : null) : null
+            };
 
-            } else if (mode === 'edit' && replaceVideo) {
-                const data = new FormData();
-                data.append('video', videoFile);
-                data.append('title', formData.title);
-                data.append('description', formData.description || "");
-                data.append('tags', JSON.stringify(formData.tags));
-                data.append('studios', JSON.stringify(formData.studios));
-                data.append('actors', JSON.stringify(formData.actors));
-                data.append('characters', JSON.stringify(formData.characters));
-                if (formData.year) data.append('year', formData.year);
-                if (assignToSeries && formData.seriesId) {
-                    data.append('seriesId', formData.seriesId);
-                    if (formData.episodeNumber) data.append('episodeNumber', formData.episodeNumber);
-                    data.append('seasonNumber', formData.seasonNumber || 1);
-                }
-                await videoAPI.replaceVideo(id, data, onProgress);
-                toast.success("Video replaced successfully");
-                const backUrl = existingVideo?.seriesId ? `/series/${existingVideo.seriesId?._id || existingVideo.seriesId}` : `/video/${id}`;
-                setTimeout(() => navigate(backUrl), 800);
-
-            } else {
-                // New upload or add-episode
-                const data = new FormData();
-                data.append('video', videoFile);
-                data.append('title', formData.title);
-                data.append('description', formData.description || "");
-                data.append('tags', JSON.stringify(formData.tags));
-                data.append('studios', JSON.stringify(formData.studios));
-                data.append('actors', JSON.stringify(formData.actors));
-                data.append('characters', JSON.stringify(formData.characters));
-                if (formData.year) data.append('year', formData.year);
-
-                const targetSeriesId = mode === 'add-episode' ? seriesIdParam : (assignToSeries ? formData.seriesId : null);
-                if (targetSeriesId) {
-                    data.append('seriesId', targetSeriesId);
-                    if (formData.episodeNumber) data.append('episodeNumber', formData.episodeNumber);
-                    data.append('seasonNumber', formData.seasonNumber || 1);
-                }
-
-                const response = await videoAPI.uploadVideo(data, onProgress);
-                const successMsg = targetSeriesId ? "Episode added successfully!" : "Video uploaded successfully!";
-                toast.success(successMsg);
-
-                const navTarget = targetSeriesId
-                    ? `/series/${targetSeriesId}`
-                    : `/video/${response.video._id}`;
-                setTimeout(() => navigate(navTarget), 800);
+            toast.promise(videoAPI.updateVideo(id, meta).then((res) => {
+                    if (res?.success) {
+                        const backUrl = existingVideo?.seriesId ? `/series/${existingVideo.seriesId?._id || existingVideo.seriesId}?ep=${existingVideo._id}` : `/video/${id}`;
+                        setTimeout(() => navigate(backUrl), 800);
+                        return res;
+                    } else {
+                        throw new Error("Failed to update video metadata");
+                    }
+            }).finally(() => {
+                setUploading(false);
+                setUploadProgress(0);
+            }), {
+                loading: "Updating video metadata...",
+                success: "Video updated successfully",
+                error: "Failed to update video metadata"
+            });
+        } else if (mode === 'edit' && replaceVideo) {
+            const data = new FormData();
+            data.append('video', videoFile);
+            data.append('title', formData.title);
+            data.append('description', formData.description || "");
+            data.append('tags', JSON.stringify(formData.tags));
+            data.append('studios', JSON.stringify(formData.studios));
+            data.append('actors', JSON.stringify(formData.actors));
+            data.append('characters', JSON.stringify(formData.characters));
+            if (formData.year) data.append('year', formData.year);
+            if (assignToSeries && formData.seriesId) {
+                data.append('seriesId', formData.seriesId);
+                if (formData.episodeNumber) data.append('episodeNumber', formData.episodeNumber);
+                data.append('seasonNumber', formData.seasonNumber || 1);
             }
-        } catch (error) {
-            console.error("Submit error:", error);
-            toast.error(error.response?.data?.error || "Operation failed");
-        } finally {
-            setUploading(false);
-            setUploadProgress(0);
+
+            toast.promise(videoAPI.replaceVideo(id, data, onProgress).then((res) => {
+                if (res?.success) {
+                    const backUrl = existingVideo?.seriesId ? `/series/${existingVideo.seriesId?._id || existingVideo.seriesId}?ep=${existingVideo._id}` : `/video/${id}`;
+                    setTimeout(() => navigate(backUrl), 800);
+                    return res;
+                } else {
+                    throw new Error("Failed to replace video");
+                }
+            }).finally(() => {
+                setUploading(false);
+                setUploadProgress(0);
+            }), {
+                loading: "Replacing video...",
+                success: "Video replaced successfully",
+                error: "Failed to replace video"
+            });
+        } else {
+            // New upload or add-episode
+            const data = new FormData();
+            data.append('video', videoFile);
+            data.append('title', formData.title);
+            data.append('description', formData.description || "");
+            data.append('tags', JSON.stringify(formData.tags));
+            data.append('studios', JSON.stringify(formData.studios));
+            data.append('actors', JSON.stringify(formData.actors));
+            data.append('characters', JSON.stringify(formData.characters));
+            if (formData.year) data.append('year', formData.year);
+
+            const targetSeriesId = mode === 'add-episode' ? seriesIdParam : (assignToSeries ? formData.seriesId : null);
+            if (targetSeriesId) {
+                data.append('seriesId', targetSeriesId);
+                if (formData.episodeNumber) data.append('episodeNumber', formData.episodeNumber);
+                data.append('seasonNumber', formData.seasonNumber || 1);
+            }
+
+            toast.promise(videoAPI.uploadVideo(data, onProgress).then((res) => {
+                if (res?.success) {
+                    const navTarget = targetSeriesId
+                        ? `/series/${targetSeriesId}?ep=${res.video._id}`
+                        : `/video/${res.video._id}`;
+                    setTimeout(() => navigate(navTarget), 800);
+                    return res;
+                } else {
+                    throw new Error("Failed to upload video");
+                }
+            }).finally(() => {
+                setUploading(false);
+                setUploadProgress(0);
+            }), {
+                loading: "Uploading video...",
+                success: targetSeriesId ? "Episode added successfully!" : "Video uploaded successfully!",
+                error: "Failed to upload video"
+            });
         }
     };
 
@@ -302,8 +335,6 @@ function UploadVideo({ mode = 'new' }) {
 
     return (
         <div className="min-h-screen bg-slate-950 text-white">
-            <Toaster position="top-right" />
-
             {/* Header */}
             <header className="sticky top-0 z-30 bg-slate-950/95 backdrop-blur-sm border-b border-slate-800">
                 <div className="container mx-auto p-4">
@@ -593,24 +624,56 @@ function UploadVideo({ mode = 'new' }) {
                     )}
 
                     {/* Tags */}
-                    <TagSection title="Tags" field="tags" inputValue={tagInput} setInputValue={setTagInput}
-                        items={formData.tags} suggestions={availableTags} datalistId="tags-list" placeholder="Add tag"
-                        onAdd={() => addItem('tags', tagInput, setTagInput)} onRemove={(v) => removeItem('tags', v)} disabled={uploading} />
+                    <TagSection 
+                        title="Tags" 
+                        inputValue={tagInput} 
+                        setInputValue={setTagInput}
+                        selectedItems={formData.tags} 
+                        suggestions={availableTags} 
+                        placeholder="Add tag" 
+                        onSelect={(val) => toggleItem('tags', val)}
+                        onAdd={() => addItem('tags', tagInput, setTagInput)} 
+                        disabled={uploading} 
+                    />
 
                     {/* Studios */}
-                    <TagSection title="Studios" field="studios" inputValue={studioInput} setInputValue={setStudioInput}
-                        items={formData.studios} suggestions={availableStudios} datalistId="studios-list" placeholder="Add studio"
-                        onAdd={() => addItem('studios', studioInput, setStudioInput)} onRemove={(v) => removeItem('studios', v)} disabled={uploading} />
+                    <TagSection 
+                        title="Studios" 
+                        inputValue={studioInput} 
+                        setInputValue={setStudioInput}
+                        selectedItems={formData.studios} 
+                        suggestions={availableStudios} 
+                        placeholder="Add studio"
+                        onSelect={(val) => toggleItem('studios', val)}
+                        onAdd={() => addItem('studios', studioInput, setStudioInput)} 
+                        disabled={uploading} 
+                    />
 
                     {/* Actors */}
-                    <TagSection title="Actors" field="actors" inputValue={actorInput} setInputValue={setActorInput}
-                        items={formData.actors} suggestions={availableActors} datalistId="actors-list" placeholder="Add actor"
-                        onAdd={() => addItem('actors', actorInput, setActorInput)} onRemove={(v) => removeItem('actors', v)} disabled={uploading} />
+                    <TagSection 
+                        title="Actors" 
+                        inputValue={actorInput} 
+                        setInputValue={setActorInput}
+                        selectedItems={formData.actors} 
+                        suggestions={availableActors} 
+                        placeholder="Add actor" 
+                        onSelect={(val) => toggleItem('actors', val)}
+                        onAdd={() => addItem('actors', actorInput, setActorInput)} 
+                        disabled={uploading} 
+                    />
 
                     {/* Characters */}
-                    <TagSection title="Characters" field="characters" inputValue={characterInput} setInputValue={setCharacterInput}
-                        items={formData.characters} suggestions={[]} datalistId={null} placeholder="Add character"
-                        onAdd={() => addItem('characters', characterInput, setCharacterInput)} onRemove={(v) => removeItem('characters', v)} disabled={uploading} />
+                    <TagSection 
+                        title="Characters" 
+                        inputValue={characterInput} 
+                        setInputValue={setCharacterInput}
+                        selectedItems={formData.characters} 
+                        suggestions={[]} 
+                        placeholder="Add character"
+                        onSelect={(val) => toggleItem('characters', val)}
+                        onAdd={() => addItem('characters', characterInput, setCharacterInput)} 
+                        disabled={uploading} 
+                    />
 
                     {/* Submit */}
                     <div className="flex gap-4">
@@ -641,7 +704,25 @@ function UploadVideo({ mode = 'new' }) {
     );
 }
 
-function TagSection({ title, inputValue, setInputValue, items, suggestions, datalistId, placeholder, onAdd, onRemove, disabled }) {
+function TagSection({ title, inputValue, setInputValue, selectedItems, suggestions, placeholder, onSelect, onAdd, disabled }) {
+    const [matchedItems, setMatchedItems] = useState(suggestions || []);
+
+    useEffect(() => {
+        if (!inputValue) {
+            setMatchedItems(suggestions);
+            return;
+        }
+
+        const debounce = setTimeout(() => {
+            const matched = suggestions.filter((s) => s.toLowerCase().includes(inputValue.toLowerCase()));
+            setMatchedItems(matched);
+        }, 500);
+
+        return () => clearTimeout(debounce);
+    }, [inputValue, suggestions]);
+
+    const showItems = [...new Set([...selectedItems, ...matchedItems])];
+
     return (
         <div className="bg-slate-900 rounded-lg p-6 border border-slate-800">
             <h2 className="text-xl font-semibold mb-4">{title}</h2>
@@ -651,32 +732,37 @@ function TagSection({ title, inputValue, setInputValue, items, suggestions, data
                         type="text"
                         value={inputValue}
                         onChange={(e) => setInputValue(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), onAdd())}
+                        onKeyDown={(e) => {
+                            if (e.key !== 'Enter') return; 
+                            e.preventDefault(); 
+                            if (matchedItems.length === 0) onAdd();
+                            else if (matchedItems.length === 1) {
+                                onSelect?.(matchedItems[0]);
+                                setInputValue('');
+                            }
+                        }}
                         className="flex-1 px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500"
                         placeholder={placeholder}
-                        list={datalistId || undefined}
                         disabled={disabled}
                     />
-                    {datalistId && suggestions.length > 0 && (
-                        <datalist id={datalistId}>
-                            {suggestions.map((s, i) => <option key={i} value={s} />)}
-                        </datalist>
-                    )}
                     <button type="button" onClick={onAdd} disabled={disabled}
                         className="px-4 py-2 bg-red-500 hover:bg-red-600 rounded-lg transition disabled:opacity-50">
                         <Plus className="w-5 h-5" />
                     </button>
                 </div>
-                {items.length > 0 && (
+                {showItems.length > 0 && (
                     <div className="flex flex-wrap gap-2">
-                        {items.map((item, i) => (
-                            <span key={i} className="flex items-center gap-2 px-3 py-1 bg-slate-800 rounded-full text-sm">
+                        {showItems.map((item, i) => (
+                            <button 
+                                key={i} 
+                                onClick={() => onSelect?.(item)}
+                                disabled={disabled}
+                                className={`flex items-center justify-center gap-2 px-3 py-1 rounded-full text-sm cursor-pointer border transition disabled:opacity-50 disabled:cursor-not-allowed ${
+                                    selectedItems.includes(item) ? 'bg-red-500 border-red-500' : 'bg-slate-800 border-slate-800 hover:border-red-500'
+                                }`}
+                            >
                                 {item}
-                                <button type="button" onClick={() => onRemove(item)} disabled={disabled}
-                                    className="hover:text-red-500 transition">
-                                    <X className="w-4 h-4" />
-                                </button>
-                            </span>
+                            </button>
                         ))}
                     </div>
                 )}

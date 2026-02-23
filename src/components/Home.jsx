@@ -1,7 +1,7 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { seriesAPI, videoAPI } from "../api/api";
-import toast, { Toaster } from "react-hot-toast";
-import { Film, Filter, Grid, Layers, List, Plus } from "lucide-react";
+import toast from "react-hot-toast";
+import { Film, Filter, Grid, Layers, List, Plus, Search } from "lucide-react";
 import VideoCard from "./VideoCard";
 import SeriesCard from "./SeriesCard";
 import FilterSidebar from "./FilterSidebar";
@@ -20,6 +20,13 @@ const DEFAULT_FILTERS = {
     order: "desc"
 };
 
+// Content-type display modes
+const DISPLAY_MODES = [
+    { value: 'all', label: 'All', icon: null },
+    { value: 'series', label: 'Series', icon: Layers },
+    { value: 'videos', label: 'Videos', icon: Film },
+];
+
 function Home() {
     const navigate = useNavigate();
 
@@ -28,28 +35,34 @@ function Home() {
     const [loading, setLoading] = useState(false);
     const [showFilters, setShowFilters] = useState(false);
     const [viewMode, setViewMode] = useMyStorage("vibeflix_view", "grid");
+    const [displayMode, setDisplayMode] = useMyStorage("vibeflix_display", "all"); // all | series | videos
     const [currentPage, setCurrentPage] = useState(1);
     const [totalPages, setTotalPages] = useState(1);
     const [filters, setFilters] = useState(DEFAULT_FILTERS);
 
+    const [searchTerm, setSearchTerm] = useState('');
+    const [showQuickSearch, setShowQuickSearch] = useState(false);
+    const quickSearchRef = useRef(null);
+
     const buildParams = useCallback((extra = {}) => ({
         page: currentPage,
         limit: 20,
+        exceptSeries: displayMode !== 'videos',
         ...filters,
         tags: filters.tags.join(","),
         studios: filters.studios.join(","),
         actors: filters.actors.join(","),
         characters: filters.characters.join(","),
         ...extra
-    }), [currentPage, filters]);
+    }), [currentPage, filters, displayMode]);
 
     const fetchContent = useCallback(async () => {
         setLoading(true);
         try {
             const params = buildParams();
             const [seriesData, videoData] = await Promise.all([
-                seriesAPI.getSeries(params),
-                videoAPI.getVideos(params)
+                displayMode !== 'videos' ? seriesAPI.getSeries(params) : Promise.resolve({ series: [] }),
+                displayMode !== 'series' ? videoAPI.getVideos(params) : Promise.resolve({ videos: [], totalPages: 1 }),
             ]);
 
             setSeriesList(seriesData.series || []);
@@ -61,29 +74,55 @@ function Home() {
         } finally {
             setLoading(false);
         }
-    }, [buildParams]);
+    }, [buildParams, displayMode]);
 
     useEffect(() => { fetchContent(); }, [fetchContent]);
+    useEffect(() => { setCurrentPage(1); }, [displayMode]);
+
+    useEffect(() => {
+        const debounce = setTimeout(() => {
+            setFilters(f => ({ ...f, search: searchTerm }));
+            setCurrentPage(1);
+        }, 500);
+
+        return () => clearTimeout(debounce);
+    }, [searchTerm]);
 
     const handleSeriesClick = (series) => navigate(`/series/${series._id}`);
     const handleVideoClick = (video) => navigate(`/video/${video._id}`);
 
     const handleToggleFavoriteVideo = async (videoId, e) => {
         if (e) e.stopPropagation();
-        try {
-            await videoAPI.toggleFavorite(videoId);
-            setVideos(prev => prev.map(v => v._id === videoId ? { ...v, isFavorite: !v.isFavorite } : v));
-            toast.success("Favorite updated");
-        } catch (_) { toast.error("Failed to update favorite"); }
+
+        toast.promise(videoAPI.toggleFavorite(videoId).then((res) => {
+            if (res?.success) {
+                setVideos(prev => prev.map(v => v._id === videoId ? { ...v, isFavorite: !v.isFavorite } : v));
+                return "Favorite updated";
+            } else {
+                throw new Error("Failed to update favorite");
+            }
+        }), {
+            loading: "Updating favorite...",
+            success: "Favorite updated",
+            error: "Failed to update favorite"
+        });
     };
 
     const handleToggleFavoriteSeries = async (seriesId, e) => {
         if (e) e.stopPropagation();
-        try {
-            await seriesAPI.toggleFavorite(seriesId);
-            setSeriesList(prev => prev.map(s => s._id === seriesId ? { ...s, isFavorite: !s.isFavorite } : s));
-            toast.success("Favorite updated");
-        } catch (_) { toast.error("Failed to update favorite"); }
+
+        toast.promise(seriesAPI.toggleFavorite(seriesId).then((res) => {
+            if (res?.success) {
+                setSeriesList(prev => prev.map(s => s._id === seriesId ? { ...s, isFavorite: !s.isFavorite } : s));
+                return "Favorite updated";
+            } else {
+                throw new Error("Failed to update favorite");
+            }
+        }), {
+            loading: "Updating favorite...",
+            success: "Favorite updated",
+            error: "Failed to update favorite"
+        });
     };
 
     const handleFilterChange = (newFilters) => {
@@ -91,41 +130,21 @@ function Home() {
         setCurrentPage(1);
     };
 
-    const handleQuickSearch = (e) => {
-        setFilters(f => ({ ...f, search: e.target.value }));
-        setCurrentPage(1);
-    };
-
     const handleTagClick = (tag, e) => {
         if (e) e.stopPropagation();
-        if (!filters.tags.includes(tag)) {
-            setFilters(f => ({ ...f, tags: [...f.tags, tag] }));
-            setCurrentPage(1);
-        }
+        if (!filters.tags.includes(tag)) { setFilters(f => ({ ...f, tags: [...f.tags, tag] })); setCurrentPage(1); }
     };
-
     const handleStudioClick = (studio, e) => {
         if (e) e.stopPropagation();
-        if (!filters.studios.includes(studio)) {
-            setFilters(f => ({ ...f, studios: [...f.studios, studio] }));
-            setCurrentPage(1);
-        }
+        if (!filters.studios.includes(studio)) { setFilters(f => ({ ...f, studios: [...f.studios, studio] })); setCurrentPage(1); }
     };
-
     const handleActorClick = (actor, e) => {
         if (e) e.stopPropagation();
-        if (!filters.actors.includes(actor)) {
-            setFilters(f => ({ ...f, actors: [...f.actors, actor] }));
-            setCurrentPage(1);
-        }
+        if (!filters.actors.includes(actor)) { setFilters(f => ({ ...f, actors: [...f.actors, actor] })); setCurrentPage(1); }
     };
-
     const handleCharacterClick = (character, e) => {
         if (e) e.stopPropagation();
-        if (!filters.characters.includes(character)) {
-            setFilters(f => ({ ...f, characters: [...f.characters, character] }));
-            setCurrentPage(1);
-        }
+        if (!filters.characters.includes(character)) { setFilters(f => ({ ...f, characters: [...f.characters, character] })); setCurrentPage(1); }
     };
 
     const handleRemoveFilter = (type, value) => {
@@ -143,86 +162,132 @@ function Home() {
         setCurrentPage(1);
     };
 
+    const handleShowQuickSearch = () => {
+        setShowQuickSearch(true);
+        setTimeout(() => quickSearchRef.current?.focus(), 0);
+    };
+
     const hasFilters = filters.tags.length > 0 || filters.studios.length > 0 ||
         filters.actors.length > 0 || filters.characters.length > 0 ||
         filters.year || filters.favorite;
 
     const totalContent = seriesList.length + videos.length;
+    const showSeries = displayMode !== 'videos';
+    const showVideos = displayMode !== 'series';
+
+    const filterCount = filters.tags.length + filters.studios.length + filters.actors.length +
+        filters.characters.length + (filters.year ? 1 : 0) + (filters.favorite ? 1 : 0);
 
     return (
         <div className="min-h-screen bg-slate-950">
-            <Toaster position="top-right" />
-
             {/* Header */}
             <header className="sticky top-0 z-30 bg-slate-950/95 backdrop-blur-sm border-b border-slate-800">
-                <div className="container mx-auto p-4">
-                    <div className="flex items-center justify-between mb-4">
+                <div className="container mx-auto px-3 sm:px-4 pt-3 sm:pt-4 pb-2 sm:pb-3">
+                    {/* Top row */}
+                    <div className="flex items-center justify-between gap-2 mb-3">
                         <h1
-                            className="text-3xl font-bold text-red-500 cursor-pointer hover:text-red-400 transition"
+                            className="text-2xl sm:text-3xl font-bold text-red-500 cursor-pointer hover:text-red-400 transition shrink-0"
                             onClick={() => navigate('/')}
                         >
                             VIBEFLIX
                         </h1>
 
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap justify-end">
                             {/* View mode toggle */}
                             <button
                                 onClick={() => setViewMode(v => v === 'grid' ? 'list' : 'grid')}
                                 className="p-2 bg-slate-800 hover:bg-slate-700 rounded-lg transition"
                                 title={`Switch to ${viewMode === 'grid' ? 'list' : 'grid'} view`}
                             >
-                                {viewMode === 'grid' ? <List className="w-5 h-5 text-white" /> : <Grid className="w-5 h-5 text-white" />}
+                                {viewMode === 'grid'
+                                    ? <List className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
+                                    : <Grid className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
+                                }
                             </button>
 
                             {/* Filter button */}
                             <button
                                 onClick={() => setShowFilters(true)}
-                                className={`flex items-center gap-2 p-2 rounded-lg transition ${
+                                className={`flex items-center gap-1.5 px-2 py-2 sm:px-3 rounded-lg transition ${
                                     hasFilters ? 'bg-red-500 text-white' : 'bg-slate-800 text-white hover:bg-slate-700'
                                 }`}
                             >
-                                <Filter className="w-5 h-5" />
-                                <span className="hidden sm:inline">
-                                    Filters {hasFilters && `(${
-                                        filters.tags.length + filters.studios.length + filters.actors.length +
-                                        filters.characters.length + (filters.year ? 1 : 0) + (filters.favorite ? 1 : 0)
-                                    })`}
+                                <Filter className="w-4 h-4 sm:w-5 sm:h-5" />
+                                <span className="hidden sm:inline text-sm">
+                                    Filters{filterCount > 0 ? ` (${filterCount})` : ''}
                                 </span>
                             </button>
 
                             {/* Create series */}
                             <button
                                 onClick={() => navigate('/series/create')}
-                                className="flex items-center gap-2 p-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition"
+                                className="flex items-center gap-1.5 px-2 py-2 sm:px-3 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition"
                                 title="Create new series"
                             >
-                                <Layers className="w-5 h-5" />
-                                <span className="hidden sm:inline">New Series</span>
+                                <Layers className="w-4 h-4 sm:w-5 sm:h-5" />
+                                <span className="hidden sm:inline text-sm">New Series</span>
                             </button>
 
                             {/* Upload video */}
                             <button
                                 onClick={() => navigate('/upload')}
-                                className="flex items-center gap-2 p-2 bg-red-500 hover:bg-red-600 text-white rounded-lg transition"
+                                className="flex items-center gap-1.5 px-2 py-2 sm:px-3 bg-red-500 hover:bg-red-600 text-white rounded-lg transition"
                             >
-                                <Plus className="w-5 h-5" />
-                                <span className="hidden sm:inline">Upload</span>
+                                <Plus className="w-4 h-4 sm:w-5 sm:h-5" />
+                                <span className="hidden sm:inline text-sm">Upload</span>
                             </button>
                         </div>
                     </div>
 
-                    {/* Quick search */}
-                    <input
-                        type="text"
-                        value={filters.search}
-                        onChange={handleQuickSearch}
-                        placeholder="Quick search..."
-                        className="w-full px-4 py-2 bg-slate-800 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 mb-3"
-                    />
+                    {/* Display mode tabs + search row */}
+                    <div className="flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between mb-2">
+                        <div className="flex gap-2 items-center justify-between">
+                            {/* Display mode tabs */}
+                            <div className="flex gap-1 bg-slate-900 p-1 rounded-lg shrink-0">
+                                {DISPLAY_MODES.map(({ value, label, icon: Icon }) => (
+                                    <button
+                                        key={value}
+                                        onClick={() => setDisplayMode(value)}
+                                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition ${
+                                            displayMode === value
+                                                ? 'bg-red-500 text-white shadow-sm'
+                                                : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                                        }`}
+                                    >
+                                        {Icon && <Icon className="w-3.5 h-3.5" />}
+                                        {label}
+                                    </button>
+                                ))}
+                            </div>
+
+                            {!showQuickSearch && (
+                                <button 
+                                    onClick={handleShowQuickSearch}
+                                    className="px-3 py-2.5 rounded-md transition text-slate-400 hover:text-white hover:bg-slate-800 block sm:hidden"
+                                >
+                                    <Search className="w-4.5 h-4.5" />
+                                </button>
+                            )}
+                        </div>
+
+                        {/* Quick search */}
+                        <div className={`relative text-sm ${showQuickSearch ? 'flex flex-1' : 'hidden sm:flex sm:w-auto'}`}>
+                            <Search className="w-3.5 h-3.5 absolute top-1/2 left-2 -translate-y-1/2 text-slate-400" />
+                            <input 
+                                ref={quickSearchRef}
+                                type="text"
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                                onBlur={() => setShowQuickSearch(false)}
+                                placeholder="Quick search…"
+                                className="px-8 py-2.5 bg-slate-800 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 w-full sm:w-auto"
+                            />
+                        </div>
+                    </div>
 
                     {/* Active filter pills */}
                     {hasFilters && (
-                        <div className="flex flex-wrap gap-2">
+                        <div className="flex flex-wrap gap-1.5 pb-1">
                             {filters.favorite && (
                                 <FilterPill label="Favorites" onRemove={() => handleRemoveFilter('favorite')} color="red" />
                             )}
@@ -247,27 +312,27 @@ function Home() {
             </header>
 
             {/* Main content */}
-            <main className="container mx-auto px-4 py-8">
+            <main className="container mx-auto px-3 sm:px-4 py-6 sm:py-8">
                 {loading ? (
                     <div className="flex flex-col items-center justify-center h-64">
                         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-red-500 mb-4" />
-                        <p className="text-white text-xl">Loading...</p>
+                        <p className="text-white text-lg">Loading…</p>
                     </div>
                 ) : totalContent === 0 ? (
                     <EmptyState hasFilters={hasFilters || !!filters.search} navigate={navigate} />
                 ) : (
                     <>
                         {/* ── Series section ── */}
-                        {seriesList.length > 0 && (
-                            <section className="mb-10">
+                        {showSeries && seriesList.length > 0 && (
+                            <section className="mb-8 sm:mb-10">
                                 <div className="flex items-center gap-3 mb-4">
                                     <Layers className="w-5 h-5 text-red-500" />
-                                    <h2 className="text-xl font-bold text-white">Series</h2>
+                                    <h2 className="text-lg sm:text-xl font-bold text-white">Series</h2>
                                     <span className="text-slate-500 text-sm">({seriesList.length})</span>
                                 </div>
                                 <div className={
                                     viewMode === 'grid'
-                                        ? 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6'
+                                        ? 'grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6'
                                         : 'space-y-3'
                                 }>
                                     {seriesList.map(series => (
@@ -287,19 +352,24 @@ function Home() {
                             </section>
                         )}
 
-                        {/* ── Standalone Videos section ── */}
-                        {videos.length > 0 && (
+                        {/* Divider between sections when both are shown */}
+                        {showSeries && showVideos && seriesList.length > 0 && videos.length > 0 && (
+                            <div className="border-t border-slate-800 mb-8 sm:mb-10" />
+                        )}
+
+                        {/* ── Videos section ── */}
+                        {showVideos && videos.length > 0 && (
                             <section>
-                                {seriesList.length > 0 && (
+                                {(displayMode === 'all' && seriesList.length > 0) || displayMode === 'videos' ? (
                                     <div className="flex items-center gap-3 mb-4">
                                         <Film className="w-5 h-5 text-red-500" />
-                                        <h2 className="text-xl font-bold text-white">Videos</h2>
+                                        <h2 className="text-lg sm:text-xl font-bold text-white">Videos</h2>
                                         <span className="text-slate-500 text-sm">({videos.length})</span>
                                     </div>
-                                )}
+                                ) : null}
                                 <div className={
                                     viewMode === 'grid'
-                                        ? 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6'
+                                        ? 'grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6'
                                         : 'space-y-3'
                                 }>
                                     {videos.map(video => (
@@ -317,17 +387,17 @@ function Home() {
                                     ))}
                                 </div>
 
-                                {/* Pagination for videos */}
+                                {/* Pagination */}
                                 {totalPages > 1 && (
                                     <div className="flex justify-center items-center gap-2 mt-8">
                                         <button
                                             onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                                             disabled={currentPage === 1}
-                                            className="px-4 py-2 bg-slate-800 text-white rounded-lg disabled:opacity-50 hover:bg-slate-700 transition"
+                                            className="px-3 sm:px-4 py-2 bg-slate-800 text-white rounded-lg disabled:opacity-50 hover:bg-slate-700 transition text-sm"
                                         >
-                                            Previous
+                                            Prev
                                         </button>
-                                        <div className="flex gap-2">
+                                        <div className="flex gap-1.5">
                                             {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
                                                 const pageNum = currentPage <= 3
                                                     ? i + 1
@@ -339,7 +409,7 @@ function Home() {
                                                     <button
                                                         key={pageNum}
                                                         onClick={() => setCurrentPage(pageNum)}
-                                                        className={`px-4 py-2 rounded-lg transition ${
+                                                        className={`w-9 h-9 rounded-lg text-sm transition ${
                                                             currentPage === pageNum ? 'bg-red-500 text-white' : 'bg-slate-800 text-white hover:bg-slate-700'
                                                         }`}
                                                     >
@@ -351,7 +421,7 @@ function Home() {
                                         <button
                                             onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
                                             disabled={currentPage === totalPages}
-                                            className="px-4 py-2 bg-slate-800 text-white rounded-lg disabled:opacity-50 hover:bg-slate-700 transition"
+                                            className="px-3 sm:px-4 py-2 bg-slate-800 text-white rounded-lg disabled:opacity-50 hover:bg-slate-700 transition text-sm"
                                         >
                                             Next
                                         </button>
@@ -384,7 +454,7 @@ function FilterPill({ label, onRemove, color = "slate" }) {
     return (
         <button
             onClick={onRemove}
-            className={`group px-3 py-1 text-sm rounded-full transition flex items-center gap-1.5 ${colorMap[color]}`}
+            className={`group px-2.5 py-1 text-xs sm:text-sm rounded-full transition flex items-center gap-1 ${colorMap[color]}`}
         >
             {label}
             <span className="opacity-60 group-hover:opacity-100 text-base leading-none">×</span>
@@ -394,26 +464,26 @@ function FilterPill({ label, onRemove, color = "slate" }) {
 
 function EmptyState({ hasFilters, navigate }) {
     return (
-        <div className="flex flex-col items-center justify-center h-64 text-center">
-            <Film className="w-24 h-24 text-slate-700 mb-4" />
-            <p className="text-slate-400 text-xl mb-2">
+        <div className="flex flex-col items-center justify-center h-64 text-center px-4">
+            <Film className="w-20 h-20 text-slate-700 mb-4" />
+            <p className="text-slate-400 text-lg sm:text-xl mb-2">
                 {hasFilters ? 'No results found' : 'Nothing here yet'}
             </p>
             <p className="text-slate-500 mb-6 text-sm">
                 {hasFilters ? 'Try adjusting your filters' : 'Start by creating a series or uploading a video'}
             </p>
             {!hasFilters && (
-                <div className="flex gap-3">
+                <div className="flex gap-3 flex-wrap justify-center">
                     <button
                         onClick={() => navigate('/series/create')}
-                        className="flex items-center gap-2 px-5 py-2.5 bg-slate-800 text-white rounded-lg hover:bg-slate-700 transition font-medium"
+                        className="flex items-center gap-2 px-5 py-2.5 bg-slate-800 text-white rounded-lg hover:bg-slate-700 transition font-medium text-sm"
                     >
                         <Layers className="w-4 h-4" />
                         Create Series
                     </button>
                     <button
                         onClick={() => navigate('/upload')}
-                        className="flex items-center gap-2 px-5 py-2.5 bg-red-500 text-white rounded-lg hover:bg-red-600 transition font-medium"
+                        className="flex items-center gap-2 px-5 py-2.5 bg-red-500 text-white rounded-lg hover:bg-red-600 transition font-medium text-sm"
                     >
                         <Plus className="w-4 h-4" />
                         Upload Video

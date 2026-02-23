@@ -107,10 +107,10 @@ function VideoCard({ video, viewMode = 'grid', onClick, onToggleFavorite, onTagC
                         <p className="text-slate-400 text-sm line-clamp-2">{video.description}</p>
                     )}
 
-                    <TagsContainer tags={video.studios} onClick={handleStudioClick} />
-                    <TagsContainer tags={video.tags} onClick={handleTagClick} />
-                    <TagsContainer tags={video.characters} onClick={handleCharacterClick} />
-                    <TagsContainer tags={video.actors} onClick={handleActorClick} />
+                    <TagsContainer tags={video.studios} color="blue" onClick={handleStudioClick} limit={5} />
+                    <TagsContainer tags={video.actors} color="green" onClick={handleActorClick} limit={5} />
+                    <TagsContainer tags={video.characters} color="purple" onClick={handleCharacterClick} limit={5} />
+                    <TagsContainer tags={video.tags} color="slate" onClick={handleTagClick} limit={10} />
                 </div>
             </div>
         );
@@ -148,7 +148,7 @@ function VideoCard({ video, viewMode = 'grid', onClick, onToggleFavorite, onTagC
                 {/* Favorite button */}
                 <button
                     onClick={(e) => { e.stopPropagation(); onToggleFavorite && onToggleFavorite(e); }}
-                    className="absolute top-2 right-2 p-1.5 bg-black/60 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                    className="absolute top-2 right-2 p-1.5 bg-black/60 rounded-full transition-opacity"
                 >
                     <Heart
                         className={`w-4 h-4 transition ${video.isFavorite ? 'text-red-500' : 'text-white'}`}
@@ -181,10 +181,10 @@ function VideoCard({ video, viewMode = 'grid', onClick, onToggleFavorite, onTagC
                     <p className="text-slate-400 text-sm line-clamp-2">{video.description}</p>
                 )}
 
-                <TagsContainer tags={video.studios} onClick={handleStudioClick} />
-                <TagsContainer tags={video.tags} onClick={handleTagClick} />
-                <TagsContainer tags={video.characters} onClick={handleCharacterClick} />
-                <TagsContainer tags={video.actors} onClick={handleActorClick} />
+                <TagsContainer tags={video.studios} color="blue" onClick={handleStudioClick} limit={5} />
+                <TagsContainer tags={video.actors} color="green" onClick={handleActorClick} limit={5} />
+                <TagsContainer tags={video.characters} color="purple" onClick={handleCharacterClick} limit={5} />
+                <TagsContainer tags={video.tags} color="slate" onClick={handleTagClick} limit={10} />
             </div>
         </div>
     );

@@ -4,6 +4,7 @@ import Home from "./components/Home";
 import UploadVideo from "./components/UploadVideo";
 import VideoDetail, { SeriesDetail } from "./components/VideoDetail";
 import CreateSeries from "./components/CreateSeries";
+import { Toaster } from "react-hot-toast";
 
 function Layout({ children }) {
   return (
@@ -28,6 +29,8 @@ function App() {
           <Route path="/edit/:id" element={<UploadVideo mode="edit" />} />
           <Route path="/upload" element={<UploadVideo mode="new" />} />
         </Routes>
+
+        <Toaster position="top-right" />
       </Layout>
     </BrowserRouter>
   );

@@ -154,7 +154,7 @@ router.post("/", uploadThumb.single('thumbnail'), async (req, res) => {
         const series = new Series(seriesData);
         const newSeries = await series.save();
 
-        res.status(201).json({ message: 'Series created successfully', series: newSeries });
+        res.status(201).json({ success: true, message: 'Series created successfully', series: newSeries });
     } catch (error) {
         console.error('Error creating series:', error);
         if (req.file) {
@@ -208,7 +208,7 @@ router.put("/:id", uploadThumb.single('thumbnail'), async (req, res) => {
             { new: true, runValidators: true }
         );
 
-        res.json({ message: 'Series updated successfully', series: updated });
+        res.json({ success: true, message: 'Series updated successfully', series: updated });
     } catch (error) {
         console.error('Error updating series:', error);
         if (req.file) {
@@ -229,7 +229,7 @@ router.patch("/:id/favorite", async (req, res) => {
         series.isFavorite = !series.isFavorite;
         await series.save();
 
-        res.json(series);
+        res.json({ success: true, message: 'Favorite status toggled successfully', series });
     } catch (error) {
         console.error('Error toggling favorite:', error);
         res.status(500).json({ error: error.message });
@@ -286,11 +286,9 @@ router.get("/:id/episodes", async (req, res) => {
 // get all tags available in series
 router.get('/metadata/:id/tags', async (req, res) => {
     try {
-        const [videoTags, seriesTags] = await Promise.all([
-            Video.find({ seriesId: req.params.id }).distinct('tags'),
-            Series.findById(req.params.id).distinct('tags').catch(() => [])
-        ]);
-        const tags = [...new Set([...videoTags, ...seriesTags])].filter(Boolean).sort();
+        const seriesTags = await Series.findById(req.params.id).distinct('tags').catch(() => []);
+        const tags = seriesTags.filter(Boolean).sort();
+        
         res.json(tags);
     } catch (error) {
         console.error('Error fetching tags:', error);
@@ -301,11 +299,9 @@ router.get('/metadata/:id/tags', async (req, res) => {
 // get all studios available in series
 router.get('/metadata/:id/studios', async (req, res) => {
     try {
-        const [videoStudios, seriesStudios] = await Promise.all([
-            Video.find({ seriesId: req.params.id }).distinct('studios'),
-            Series.findById(req.params.id).distinct('studios').catch(() => [])
-        ]);
-        const studios = [...new Set([...videoStudios, ...seriesStudios])].filter(Boolean).sort();
+        const seriesStudios = await Series.findById(req.params.id).distinct('studios').catch(() => []);
+        const studios = seriesStudios.filter(Boolean).sort();
+
         res.json(studios);
     } catch (error) {
         console.error('Error fetching studios:', error);
@@ -316,11 +312,9 @@ router.get('/metadata/:id/studios', async (req, res) => {
 // get all actors available in series
 router.get('/metadata/:id/actors', async (req, res) => {
     try {
-        const [videoActors, seriesActors] = await Promise.all([
-            Video.find({ seriesId: req.params.id }).distinct('actors'),
-            Series.findById(req.params.id).distinct('actors').catch(() => [])
-        ]);
-        const actors = [...new Set([...videoActors, ...seriesActors])].filter(Boolean).sort();
+        const seriesActors = await Series.findById(req.params.id).distinct('actors').catch(() => []);
+        const actors = seriesActors.filter(Boolean).sort();
+
         res.json(actors);
     } catch (error) {
         console.error('Error fetching actors:', error);
@@ -331,11 +325,9 @@ router.get('/metadata/:id/actors', async (req, res) => {
 // get all characters available in series
 router.get('/metadata/:id/characters', async (req, res) => {
     try {
-        const [videoChars, seriesChars] = await Promise.all([
-            Video.find({ seriesId: req.params.id }).distinct('characters'),
-            Series.findById(req.params.id).distinct('characters').catch(() => [])
-        ]);
-        const characters = [...new Set([...videoChars, ...seriesChars])].filter(Boolean).sort();
+        const seriesChars = await Series.findById(req.params.id).distinct('characters').catch(() => []);
+        const characters = seriesChars.filter(Boolean).sort();
+        
         res.json(characters);
     } catch (error) {
         console.error('Error fetching characters:', error);

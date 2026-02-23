@@ -159,6 +159,7 @@ router.post('/upload', upload.single('video'), async (req, res) => {
         }
 
         res.status(201).json({
+            success: true,
             message: seriesId ? 'Episode uploaded successfully' : 'Video uploaded successfully',
             video: newVideo
         });
@@ -179,6 +180,7 @@ router.get("/", async (req, res) => {
         const {
             page = 1,
             limit = 20,
+            exceptSeries,
             tags,
             studios,
             actors,
@@ -191,7 +193,7 @@ router.get("/", async (req, res) => {
         } = req.query;
 
         // Only return standalone videos (not series episodes)
-        const query = { seriesId: null };
+        const query = exceptSeries === 'true' ? { seriesId: null } : {};
 
         if (tags) query.tags = { $in: tags.split(",") };
         if (studios) query.studios = { $in: studios.split(",") };
@@ -324,7 +326,7 @@ router.put('/:id', async (req, res) => {
             await rebuildSeriesMetadata(video.seriesId);
         }
 
-        res.json(video);
+        res.json({ success: true, message: 'Video updated successfully', video });
     } catch (error) {
         console.error('Error updating video:', error);
         res.status(400).json({ error: error.message });
@@ -340,7 +342,8 @@ router.patch('/:id/favorite', async (req, res) => {
         if (!video) return res.status(404).json({ error: 'Video not found' });
         video.isFavorite = !video.isFavorite;
         await video.save();
-        res.json(video);
+
+        res.json({ success: true, message: 'Favorite toggled successfully', video });
     } catch (error) {
         console.error('Error toggling favorite:', error);
         res.status(500).json({ error: error.message });
@@ -437,11 +440,8 @@ router.get('/:id/stream', async (req, res) => {
 
 router.get('/metadata/tags', async (req, res) => {
     try {
-        const [videoTags, seriesTags] = await Promise.all([
-            Video.distinct('tags'),
-            Series ? Series.distinct('tags').catch(() => []) : Promise.resolve([])
-        ]);
-        const tags = [...new Set([...videoTags, ...seriesTags])].filter(Boolean).sort();
+        const videoTags = await Video.distinct('tags');
+        const tags = videoTags.filter(Boolean).sort();
         res.json(tags);
     } catch (error) {
         console.error('Error fetching tags:', error);
@@ -451,11 +451,8 @@ router.get('/metadata/tags', async (req, res) => {
 
 router.get('/metadata/studios', async (req, res) => {
     try {
-        const [videoStudios, seriesStudios] = await Promise.all([
-            Video.distinct('studios'),
-            Series.distinct('studios').catch(() => [])
-        ]);
-        const studios = [...new Set([...videoStudios, ...seriesStudios])].filter(Boolean).sort();
+        const videoStudios = await Video.distinct('studios');
+        const studios = videoStudios.filter(Boolean).sort();
         res.json(studios);
     } catch (error) {
         console.error('Error fetching studios:', error);
@@ -465,11 +462,8 @@ router.get('/metadata/studios', async (req, res) => {
 
 router.get('/metadata/actors', async (req, res) => {
     try {
-        const [videoActors, seriesActors] = await Promise.all([
-            Video.distinct('actors'),
-            Series.distinct('actors').catch(() => [])
-        ]);
-        const actors = [...new Set([...videoActors, ...seriesActors])].filter(Boolean).sort();
+        const videoActors = await Video.distinct('actors');
+        const actors = videoActors.filter(Boolean).sort();
         res.json(actors);
     } catch (error) {
         console.error('Error fetching actors:', error);
@@ -479,11 +473,8 @@ router.get('/metadata/actors', async (req, res) => {
 
 router.get('/metadata/characters', async (req, res) => {
     try {
-        const [videoChars, seriesChars] = await Promise.all([
-            Video.distinct('characters'),
-            Series.distinct('characters').catch(() => [])
-        ]);
-        const characters = [...new Set([...videoChars, ...seriesChars])].filter(Boolean).sort();
+        const videoChars = await Video.distinct('characters');
+        const characters = videoChars.filter(Boolean).sort();
         res.json(characters);
     } catch (error) {
         console.error('Error fetching characters:', error);
