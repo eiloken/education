@@ -165,10 +165,7 @@ export function TagsContainer({ tags, color, onClick, limit }) {
     const remaining = showMore ? 0 : (tags && limit && limit > 0 && tags.length > limit) ? tags.length - limit : 0;
     const newLimit = showMore ? tags.length : limit;
 
-    const handleShowMore = (_, e) => {
-        e.stopPropagation();
-        setShowMore(true);
-    };
+    const handleShowMore = () => setShowMore(true);
 
     return (
         tags && tags.length > 0 && (
