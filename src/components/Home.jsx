@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { seriesAPI, videoAPI } from "../api/api";
 import toast from "react-hot-toast";
-import { Film, Filter, Grid, Layers, List, Plus, Search } from "lucide-react";
+import { ChevronUp, Film, Filter, Grid, Layers, List, Plus, Search } from "lucide-react";
 import VideoCard from "./VideoCard";
 import SeriesCard from "./SeriesCard";
 import FilterSidebar from "./FilterSidebar";
@@ -29,6 +29,9 @@ const DISPLAY_MODES = [
 
 function Home() {
     const navigate = useNavigate();
+
+    const [hideSecondRow, setHideSecondRow] = useState(false);
+    const [showScrollTop, setShowScrollTop] = useState(false);
 
     const [seriesList, setSeriesList] = useState([]);
     const [videos, setVideos] = useState([]);
@@ -87,6 +90,26 @@ function Home() {
 
         return () => clearTimeout(debounce);
     }, [searchTerm]);
+
+    useEffect(() => {
+        const hideThreshold = 80;
+        const showThreshold = 40;
+        const handleScroll = () => {
+            const y = window.scrollY;
+            setHideSecondRow(prev => {
+                if (!prev && y > hideThreshold) return true;
+                if (prev && y < showThreshold) return false;
+                return prev;
+            });
+            setShowScrollTop(y > 300);
+        };
+
+        window.addEventListener('scroll', handleScroll, { passive: true });
+
+        return () => {
+            window.removeEventListener('scroll', handleScroll);
+        };
+    }, []);
 
     const handleToggleFavoriteVideo = async (videoId) => {
         toast.promise(videoAPI.toggleFavorite(videoId).then((res) => {
@@ -243,75 +266,79 @@ function Home() {
                         </div>
                     </div>
 
-                    {/* Display mode tabs + search row */}
-                    <div className="flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between mb-2">
-                        <div className="flex gap-2 items-center justify-between">
-                            {/* Display mode tabs */}
-                            <div className="flex gap-1 bg-slate-900 p-1 rounded-lg shrink-0">
-                                {DISPLAY_MODES.map(({ value, label, icon: Icon }) => (
-                                    <button
-                                        key={value}
-                                        onClick={() => setDisplayMode(value)}
-                                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition ${
-                                            displayMode === value
-                                                ? 'bg-red-500 text-white shadow-sm'
-                                                : 'text-slate-400 hover:text-white hover:bg-slate-800'
-                                        }`}
+                    <div className={`transition-all duration-300 ${
+                        hideSecondRow ? 'max-h-0 overflow-hidden' : 'max-h-40 overflow-y-auto'
+                    }`}>
+                        {/* Display mode tabs + search row */}
+                        <div className="flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between mb-2">
+                            <div className="flex gap-2 items-center justify-between">
+                                {/* Display mode tabs */}
+                                <div className="flex gap-1 bg-slate-900 p-1 rounded-lg shrink-0">
+                                    {DISPLAY_MODES.map(({ value, label, icon: Icon }) => (
+                                        <button
+                                            key={value}
+                                            onClick={() => setDisplayMode(value)}
+                                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition ${
+                                                displayMode === value
+                                                    ? 'bg-red-500 text-white shadow-sm'
+                                                    : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                                            }`}
+                                        >
+                                            {Icon && <Icon className="w-3.5 h-3.5" />}
+                                            {label}
+                                        </button>
+                                    ))}
+                                </div>
+
+                                {!showQuickSearch && (
+                                    <button 
+                                        onClick={handleShowQuickSearch}
+                                        className="px-3 py-2.5 rounded-md transition text-slate-400 hover:text-white hover:bg-slate-800 block sm:hidden"
                                     >
-                                        {Icon && <Icon className="w-3.5 h-3.5" />}
-                                        {label}
+                                        <Search className="w-4.5 h-4.5" />
                                     </button>
-                                ))}
+                                )}
                             </div>
 
-                            {!showQuickSearch && (
-                                <button 
-                                    onClick={handleShowQuickSearch}
-                                    className="px-3 py-2.5 rounded-md transition text-slate-400 hover:text-white hover:bg-slate-800 block sm:hidden"
-                                >
-                                    <Search className="w-4.5 h-4.5" />
-                                </button>
-                            )}
+                            {/* Quick search */}
+                            <div className={`relative text-sm ${showQuickSearch ? 'flex flex-1' : 'hidden sm:flex sm:w-auto'}`}>
+                                <Search className="w-3.5 h-3.5 absolute top-1/2 left-2 -translate-y-1/2 text-slate-400" />
+                                <input 
+                                    ref={quickSearchRef}
+                                    type="text"
+                                    value={searchTerm}
+                                    onChange={(e) => setSearchTerm(e.target.value)}
+                                    onBlur={() => setShowQuickSearch(false)}
+                                    placeholder="Quick search…"
+                                    className="px-8 py-2.5 bg-slate-800 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 w-full sm:w-auto"
+                                />
+                            </div>
                         </div>
 
-                        {/* Quick search */}
-                        <div className={`relative text-sm ${showQuickSearch ? 'flex flex-1' : 'hidden sm:flex sm:w-auto'}`}>
-                            <Search className="w-3.5 h-3.5 absolute top-1/2 left-2 -translate-y-1/2 text-slate-400" />
-                            <input 
-                                ref={quickSearchRef}
-                                type="text"
-                                value={searchTerm}
-                                onChange={(e) => setSearchTerm(e.target.value)}
-                                onBlur={() => setShowQuickSearch(false)}
-                                placeholder="Quick search…"
-                                className="px-8 py-2.5 bg-slate-800 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 w-full sm:w-auto"
-                            />
-                        </div>
+                        {/* Active filter pills */}
+                        {hasFilters && (
+                            <div className="flex flex-wrap gap-1.5 pb-1">
+                                {filters.favorite && (
+                                    <FilterPill label="Favorites" onRemove={() => handleRemoveFilter('favorite')} color="red" />
+                                )}
+                                {filters.studios.map((s, i) => (
+                                    <FilterPill key={i} label={`Studio: ${s}`} onRemove={() => handleRemoveFilter('studio', s)} />
+                                ))}
+                                {filters.actors.map((a, i) => (
+                                    <FilterPill key={i} label={`Actor: ${a}`} onRemove={() => handleRemoveFilter('actor', a)} color="blue" />
+                                ))}
+                                {filters.characters.map((c, i) => (
+                                    <FilterPill key={i} label={`Character: ${c}`} onRemove={() => handleRemoveFilter('character', c)} color="purple" />
+                                ))}
+                                {filters.year && (
+                                    <FilterPill label={`Year: ${filters.year}`} onRemove={() => handleRemoveFilter('year')} color="green" />
+                                )}
+                                {filters.tags.map((t, i) => (
+                                    <FilterPill key={i} label={t} onRemove={() => handleRemoveFilter('tag', t)} />
+                                ))}
+                            </div>
+                        )}
                     </div>
-
-                    {/* Active filter pills */}
-                    {hasFilters && (
-                        <div className="flex flex-wrap gap-1.5 pb-1">
-                            {filters.favorite && (
-                                <FilterPill label="Favorites" onRemove={() => handleRemoveFilter('favorite')} color="red" />
-                            )}
-                            {filters.studios.map((s, i) => (
-                                <FilterPill key={i} label={`Studio: ${s}`} onRemove={() => handleRemoveFilter('studio', s)} />
-                            ))}
-                            {filters.actors.map((a, i) => (
-                                <FilterPill key={i} label={`Actor: ${a}`} onRemove={() => handleRemoveFilter('actor', a)} color="blue" />
-                            ))}
-                            {filters.characters.map((c, i) => (
-                                <FilterPill key={i} label={`Character: ${c}`} onRemove={() => handleRemoveFilter('character', c)} color="purple" />
-                            ))}
-                            {filters.year && (
-                                <FilterPill label={`Year: ${filters.year}`} onRemove={() => handleRemoveFilter('year')} color="green" />
-                            )}
-                            {filters.tags.map((t, i) => (
-                                <FilterPill key={i} label={t} onRemove={() => handleRemoveFilter('tag', t)} />
-                            ))}
-                        </div>
-                    )}
                 </div>
             </header>
 
@@ -441,6 +468,16 @@ function Home() {
                 onFilterChange={handleFilterChange}
                 currentFilters={filters}
             />
+
+            {showScrollTop && (
+                <button
+                    onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} 
+                    className="fixed bottom-6 right-6 z-50 p-3 bg-red-500 hover:bg-red-600 text-white rounded-full shadow-lg transition-all duration-300"
+                    title="Scroll to top"
+                >
+                    <ChevronUp className="w-5 h-5" />
+                </button>
+            )}
         </div>
     );
 }
