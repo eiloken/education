@@ -40,7 +40,7 @@ function SeriesCard({ series, viewMode = "grid", onToggleFavorite, onTagClick, o
                             onClick={(e) => { 
                                 e.preventDefault();
                                 e.stopPropagation(); 
-                                onToggleFavorite?.(e); 
+                                onToggleFavorite?.(); 
                             }}
                             className="shrink-0 p-1"
                         >
@@ -121,7 +121,7 @@ function SeriesCard({ series, viewMode = "grid", onToggleFavorite, onTagClick, o
                     onClick={(e) => { 
                         e.preventDefault();
                         e.stopPropagation(); 
-                        onToggleFavorite?.(e); 
+                        onToggleFavorite?.(); 
                     }}
                     className="absolute top-2 right-2 p-1.5 bg-black/60 rounded-full transition-opacity"
                 >

@@ -78,9 +78,7 @@ export function SeriesDetail() {
         });
     };
 
-    const handleToggleFavoriteVideo = async (e) => {
-        if (e) e.stopPropagation();
-
+    const handleToggleFavoriteVideo = async () => {
         toast.promise(videoAPI.toggleFavorite(currentEpisode._id).then((res) => {
             if (res?.success) {
                 setEpisodes(prev => prev.map(ep => ep._id === currentEpisode._id ? { ...ep, isFavorite: !ep.isFavorite } : ep));

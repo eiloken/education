@@ -95,11 +95,14 @@ function CreateSeries({ mode = 'create' }) {
         if (mode === 'edit') {
             toast.promise(seriesAPI.updateSeries(id, data).then((res) => {
                 if (res?.success) {
-                    settimeout(() => navigate(`/series/${res.series._id}`), 800);
+                    setTimeout(() => navigate(`/series/${res.series._id}`), 800);
                     return res;
                 } else {
                     throw new Error("Failed to update series");
                 }
+            }).catch((e) => { 
+                console.error(e); 
+                throw new Error("Failed to update series");
             }).finally(() => setSaving(false)), {
                 loading: "Updating series...",
                 success: "Series updated!",
@@ -108,11 +111,14 @@ function CreateSeries({ mode = 'create' }) {
         } else {
             toast.promise(seriesAPI.createSeries(data).then((res) => {
                 if (res?.success) {
-                    settimeout(() => navigate(`/series/${res.series._id}`), 800);
+                    setTimeout(() => navigate(`/series/${res.series._id}`), 800);
                     return res;
                 } else {
                     throw new Error("Failed to create series");
                 }
+            }).catch((e) => {
+                console.error(e);
+                throw new Error("Failed to create series");
             }).finally(() => setSaving(false)), {
                 loading: "Creating series...",
                 success: "Series created! You can now add episodes.",

@@ -92,8 +92,8 @@ function Home() {
     }, [searchTerm]);
 
     useEffect(() => {
-        const hideThreshold = 80;
-        const showThreshold = 40;
+        const hideThreshold = 300;
+        const showThreshold = 100;
         const handleScroll = () => {
             const y = window.scrollY;
             setHideSecondRow(prev => {
@@ -266,8 +266,8 @@ function Home() {
                         </div>
                     </div>
 
-                    <div className={`transition-all duration-300 ${
-                        hideSecondRow ? 'max-h-0 overflow-hidden' : 'max-h-40 overflow-y-auto'
+                    <div className={`transition-all duration-300 overflow-hidden flex flex-col ${
+                        hideSecondRow ? 'max-h-0' : 'max-h-40'
                     }`}>
                         {/* Display mode tabs + search row */}
                         <div className="flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between mb-2">
@@ -317,7 +317,7 @@ function Home() {
 
                         {/* Active filter pills */}
                         {hasFilters && (
-                            <div className="flex flex-wrap gap-1.5 pb-1">
+                            <div className="flex-1 flex flex-wrap gap-1.5 pb-1 overflow-y-auto">
                                 {filters.favorite && (
                                     <FilterPill label="Favorites" onRemove={() => handleRemoveFilter('favorite')} color="red" />
                                 )}
