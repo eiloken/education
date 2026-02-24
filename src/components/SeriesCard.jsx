@@ -2,33 +2,13 @@ import React, { useState } from "react";
 import { generalAPI } from "../api/api";
 import { Film, Heart, Layers, Play, Star } from "lucide-react";
 
-function SeriesCard({ series, viewMode = "grid", onClick, onToggleFavorite, onTagClick, onStudioClick, onCharacterClick, onActorClick }) {
+function SeriesCard({ series, viewMode = "grid", onToggleFavorite, onTagClick, onStudioClick, onCharacterClick, onActorClick }) {
     const { title, description, thumbnailPath, episodeCount, seasonCount, tags, actors, characters, studios, year, isFavorite } = series;
-
-    const handleTagClick = (tag, e) => {
-        e.stopPropagation();
-        onTagClick?.(tag, e);
-    };
-
-    const handleStudioClick = (studio, e) => {
-        e.stopPropagation();
-        onStudioClick?.(studio, e);
-    };
-
-    const handleCharacterClick = (character, e) => {
-        e.stopPropagation();
-        onCharacterClick?.(character, e);
-    };
-
-    const handleActorClick = (actor, e) => {
-        e.stopPropagation();
-        onActorClick?.(actor, e);
-    };
 
     if (viewMode === "list") {
         return (
-            <div
-                onClick={onClick}
+            <a
+                href={`/series/${series._id}`}
                 className="flex gap-4 bg-slate-900 rounded-lg overflow-hidden border border-slate-800 hover:border-slate-600 transition cursor-pointer group"
             >
                 {/* Thumbnail */}
@@ -57,7 +37,11 @@ function SeriesCard({ series, viewMode = "grid", onClick, onToggleFavorite, onTa
                             {title}
                         </h3>
                         <button
-                            onClick={(e) => { e.stopPropagation(); onToggleFavorite && onToggleFavorite(e); }}
+                            onClick={(e) => { 
+                                e.preventDefault();
+                                e.stopPropagation(); 
+                                onToggleFavorite?.(e); 
+                            }}
                             className="shrink-0 p-1"
                         >
                             <Heart
@@ -83,19 +67,19 @@ function SeriesCard({ series, viewMode = "grid", onClick, onToggleFavorite, onTa
                         <p className="text-slate-400 text-sm line-clamp-2">{description}</p>
                     )}
 
-                    <TagsContainer tags={studios} color="blue" onClick={handleStudioClick} limit={5} />
-                    <TagsContainer tags={actors} color="green" onClick={handleActorClick} limit={5} />
-                    <TagsContainer tags={characters} color="purple" onClick={handleCharacterClick} limit={5} />
-                    <TagsContainer tags={tags} color="slate" onClick={handleTagClick} limit={10} />
+                    <TagsContainer tags={studios} color="blue" onClick={onStudioClick} limit={5} />
+                    <TagsContainer tags={actors} color="green" onClick={onActorClick} limit={5} />
+                    <TagsContainer tags={characters} color="purple" onClick={onCharacterClick} limit={5} />
+                    <TagsContainer tags={tags} color="slate" onClick={onTagClick} limit={10} />
                 </div>
-            </div>
+            </a>
         );
     }
 
     // Grid mode
     return (
-        <div
-            onClick={onClick}
+        <a
+            href={`/series/${series._id}`}
             className="relative bg-slate-900 rounded-lg overflow-hidden border border-slate-800 hover:border-slate-600 transition cursor-pointer group"
         >
             {/* Thumbnail */}
@@ -134,7 +118,11 @@ function SeriesCard({ series, viewMode = "grid", onClick, onToggleFavorite, onTa
 
                 {/* Favorite button */}
                 <button
-                    onClick={(e) => { e.stopPropagation(); onToggleFavorite && onToggleFavorite(e); }}
+                    onClick={(e) => { 
+                        e.preventDefault();
+                        e.stopPropagation(); 
+                        onToggleFavorite?.(e); 
+                    }}
                     className="absolute top-2 right-2 p-1.5 bg-black/60 rounded-full transition-opacity"
                 >
                     <Heart
@@ -162,12 +150,12 @@ function SeriesCard({ series, viewMode = "grid", onClick, onToggleFavorite, onTa
                     {year && <span>{year}</span>}
                 </div>
 
-                <TagsContainer tags={studios} color="blue" onClick={handleStudioClick} limit={5} />
-                <TagsContainer tags={actors} color="green" onClick={handleActorClick} limit={5} />
-                <TagsContainer tags={characters} color="purple" onClick={handleCharacterClick} limit={5} />
-                <TagsContainer tags={tags} color="slate" onClick={handleTagClick} limit={10} />
+                <TagsContainer tags={studios} color="blue" onClick={onStudioClick} limit={5} />
+                <TagsContainer tags={actors} color="green" onClick={onActorClick} limit={5} />
+                <TagsContainer tags={characters} color="purple" onClick={onCharacterClick} limit={5} />
+                <TagsContainer tags={tags} color="slate" onClick={onTagClick} limit={10} />
             </div>
-        </div>
+        </a>
     );
 }
 
@@ -207,7 +195,11 @@ export function MetaChip({ label, color = 'slate', onClick }) {
     };
     return (
         <button 
-            onClick={(e) => onClick?.(label, e)}
+            onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onClick?.(label);
+            }}
             className={`px-2 py-0.5 ${colors[color || 'slate']} text-xs rounded-full cursor-pointer hover:bg-slate-700 transition`}
         >
             {label}

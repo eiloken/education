@@ -520,6 +520,13 @@ function VideoDetail() {
                     {/* Sidebar */}
                     <div className="space-y-4 sm:space-y-6">
                         <div className="bg-slate-900 rounded-xl p-4 sm:p-6 border border-slate-800">
+                            {video.thumbnailPath && (
+                                <img 
+                                    src={generalAPI.thumbnailUrl(video.thumbnailPath)} 
+                                    alt={video.title}
+                                    className="w-full aspect-video object-cover rounded-lg mb-4" 
+                                />
+                            )}
                             <h3 className="text-base sm:text-xl font-semibold mb-3">Details</h3>
                             <div className="text-sm space-y-2">
                                 {video.fileSize && <InfoRow label="File Size" value={formatFileSize(video.fileSize)} />}

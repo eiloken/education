@@ -88,12 +88,7 @@ function Home() {
         return () => clearTimeout(debounce);
     }, [searchTerm]);
 
-    const handleSeriesClick = (series) => navigate(`/series/${series._id}`);
-    const handleVideoClick = (video) => navigate(`/video/${video._id}`);
-
-    const handleToggleFavoriteVideo = async (videoId, e) => {
-        if (e) e.stopPropagation();
-
+    const handleToggleFavoriteVideo = async (videoId) => {
         toast.promise(videoAPI.toggleFavorite(videoId).then((res) => {
             if (res?.success) {
                 setVideos(prev => prev.map(v => v._id === videoId ? { ...v, isFavorite: !v.isFavorite } : v));
@@ -108,9 +103,7 @@ function Home() {
         });
     };
 
-    const handleToggleFavoriteSeries = async (seriesId, e) => {
-        if (e) e.stopPropagation();
-
+    const handleToggleFavoriteSeries = async (seriesId) => {
         toast.promise(seriesAPI.toggleFavorite(seriesId).then((res) => {
             if (res?.success) {
                 setSeriesList(prev => prev.map(s => s._id === seriesId ? { ...s, isFavorite: !s.isFavorite } : s));
@@ -131,20 +124,31 @@ function Home() {
     };
 
     const handleTagClick = (tag, e) => {
-        if (e) e.stopPropagation();
-        if (!filters.tags.includes(tag)) { setFilters(f => ({ ...f, tags: [...f.tags, tag] })); setCurrentPage(1); }
+        if (!filters.tags.includes(tag)) { 
+            setFilters(f => ({ ...f, tags: [...f.tags, tag] })); 
+            setCurrentPage(1); 
+        }
     };
-    const handleStudioClick = (studio, e) => {
-        if (e) e.stopPropagation();
-        if (!filters.studios.includes(studio)) { setFilters(f => ({ ...f, studios: [...f.studios, studio] })); setCurrentPage(1); }
+
+    const handleStudioClick = (studio) => {
+        if (!filters.studios.includes(studio)) { 
+            setFilters(f => ({ ...f, studios: [...f.studios, studio] })); 
+            setCurrentPage(1); 
+        }
     };
-    const handleActorClick = (actor, e) => {
-        if (e) e.stopPropagation();
-        if (!filters.actors.includes(actor)) { setFilters(f => ({ ...f, actors: [...f.actors, actor] })); setCurrentPage(1); }
+
+    const handleActorClick = (actor) => {
+        if (!filters.actors.includes(actor)) { 
+            setFilters(f => ({ ...f, actors: [...f.actors, actor] })); 
+            setCurrentPage(1); 
+        }
     };
-    const handleCharacterClick = (character, e) => {
-        if (e) e.stopPropagation();
-        if (!filters.characters.includes(character)) { setFilters(f => ({ ...f, characters: [...f.characters, character] })); setCurrentPage(1); }
+
+    const handleCharacterClick = (character) => {
+        if (!filters.characters.includes(character)) { 
+            setFilters(f => ({ ...f, characters: [...f.characters, character] })); 
+            setCurrentPage(1); 
+        }
     };
 
     const handleRemoveFilter = (type, value) => {
@@ -339,9 +343,8 @@ function Home() {
                                         <SeriesCard
                                             key={series._id}
                                             series={series}
-                                            viewMode={viewMode}
-                                            onClick={() => handleSeriesClick(series)}
-                                            onToggleFavorite={(e) => handleToggleFavoriteSeries(series._id, e)}
+                                            viewMode={viewMode} 
+                                            onToggleFavorite={() => handleToggleFavoriteSeries(series._id)}
                                             onActorClick={handleActorClick}
                                             onCharacterClick={handleCharacterClick}
                                             onStudioClick={handleStudioClick}
@@ -377,8 +380,7 @@ function Home() {
                                             key={video._id}
                                             video={video}
                                             viewMode={viewMode}
-                                            onClick={() => handleVideoClick(video)}
-                                            onToggleFavorite={(e) => handleToggleFavoriteVideo(video._id, e)}
+                                            onToggleFavorite={() => handleToggleFavoriteVideo(video._id)}
                                             onTagClick={handleTagClick}
                                             onStudioClick={handleStudioClick}
                                             onCharacterClick={handleCharacterClick}

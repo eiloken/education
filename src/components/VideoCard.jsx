@@ -3,7 +3,7 @@ import { generalAPI } from "../api/api";
 import { Clock, Eye, Film, Heart, Layers, Play } from "lucide-react";
 import { TagsContainer } from "./SeriesCard";
 
-function VideoCard({ video, viewMode = 'grid', onClick, onToggleFavorite, onTagClick, onStudioClick, onCharacterClick, onActorClick }) {
+function VideoCard({ video, viewMode = 'grid', onToggleFavorite, onTagClick, onStudioClick, onCharacterClick, onActorClick }) {
     const formatDuration = (seconds) => {
         if (!seconds) return 'N/A';
         const hours = Math.floor(seconds / 3600);
@@ -12,44 +12,11 @@ function VideoCard({ video, viewMode = 'grid', onClick, onToggleFavorite, onTagC
         return hours > 0 ? `${hours}h ${minutes}m` : (minutes > 0 ? `${minutes}m ${secondsRemaining}s` : `${secondsRemaining}s`);
     };
 
-    const formatFileSize = (bytes) => {
-        if (!bytes) return 'N/A';
-        const gb = bytes / (1024 * 1024 * 1024);
-        if (gb >= 1) return `${gb.toFixed(2)} GB`;
-        const mb = bytes / (1024 * 1024);
-        return `${mb.toFixed(2)} MB`;
-    };
-
-    const handleFavoriteClick = (e) => {
-        e.stopPropagation();
-        onToggleFavorite(e);
-    };
-
-    const handleTagClick = (tag, e) => {
-        e.stopPropagation();
-        onTagClick?.(tag, e);
-    };
-
-    const handleStudioClick = (studio, e) => {
-        e.stopPropagation();
-        onStudioClick?.(studio, e);
-    };
-
-    const handleCharacterClick = (character, e) => {
-        e.stopPropagation();
-        onCharacterClick?.(character, e);
-    };
-
-    const handleActorClick = (actor, e) => {
-        e.stopPropagation();
-        onActorClick?.(actor, e);
-    };
-
     // List view layout
     if (viewMode === "list") {
         return (
-            <div
-                onClick={onClick}
+            <a
+                href={`/video/${video._id}`}
                 className="flex gap-4 bg-slate-900 rounded-lg overflow-hidden border border-slate-800 hover:border-slate-600 transition cursor-pointer group"
             >
                 {/* Thumbnail */}
@@ -79,7 +46,11 @@ function VideoCard({ video, viewMode = 'grid', onClick, onToggleFavorite, onTagC
                             {video.title}
                         </h3>
                         <button
-                            onClick={(e) => { e.stopPropagation(); onToggleFavorite && onToggleFavorite(e); }}
+                            onClick={(e) => { 
+                                e.preventDefault();
+                                e.stopPropagation(); 
+                                onToggleFavorite?.(e); 
+                            }}
                             className="shrink-0 p-1"
                         >
                             <Heart
@@ -107,19 +78,19 @@ function VideoCard({ video, viewMode = 'grid', onClick, onToggleFavorite, onTagC
                         <p className="text-slate-400 text-sm line-clamp-2">{video.description}</p>
                     )}
 
-                    <TagsContainer tags={video.studios} color="blue" onClick={handleStudioClick} limit={5} />
-                    <TagsContainer tags={video.actors} color="green" onClick={handleActorClick} limit={5} />
-                    <TagsContainer tags={video.characters} color="purple" onClick={handleCharacterClick} limit={5} />
-                    <TagsContainer tags={video.tags} color="slate" onClick={handleTagClick} limit={10} />
+                    <TagsContainer tags={video.studios} color="blue" onClick={onStudioClick} limit={5} />
+                    <TagsContainer tags={video.actors} color="green" onClick={onActorClick} limit={5} />
+                    <TagsContainer tags={video.characters} color="purple" onClick={onCharacterClick} limit={5} />
+                    <TagsContainer tags={video.tags} color="slate" onClick={onTagClick} limit={10} />
                 </div>
-            </div>
+            </a>
         );
     }
 
     // Grid mode
     return (
-        <div
-            onClick={onClick}
+        <a
+            href={`/video/${video._id}`}
             className="relative bg-slate-900 rounded-lg overflow-hidden border border-slate-800 hover:border-slate-600 transition cursor-pointer group"
         >
             {/* Thumbnail */}
@@ -147,7 +118,11 @@ function VideoCard({ video, viewMode = 'grid', onClick, onToggleFavorite, onTagC
 
                 {/* Favorite button */}
                 <button
-                    onClick={(e) => { e.stopPropagation(); onToggleFavorite && onToggleFavorite(e); }}
+                    onClick={(e) => { 
+                        e.preventDefault();
+                        e.stopPropagation(); 
+                        onToggleFavorite?.(e); 
+                    }}
                     className="absolute top-2 right-2 p-1.5 bg-black/60 rounded-full transition-opacity"
                 >
                     <Heart
@@ -181,12 +156,12 @@ function VideoCard({ video, viewMode = 'grid', onClick, onToggleFavorite, onTagC
                     <p className="text-slate-400 text-sm line-clamp-2">{video.description}</p>
                 )}
 
-                <TagsContainer tags={video.studios} color="blue" onClick={handleStudioClick} limit={5} />
-                <TagsContainer tags={video.actors} color="green" onClick={handleActorClick} limit={5} />
-                <TagsContainer tags={video.characters} color="purple" onClick={handleCharacterClick} limit={5} />
-                <TagsContainer tags={video.tags} color="slate" onClick={handleTagClick} limit={10} />
+                <TagsContainer tags={video.studios} color="blue" onClick={onStudioClick} limit={5} />
+                <TagsContainer tags={video.actors} color="green" onClick={onActorClick} limit={5} />
+                <TagsContainer tags={video.characters} color="purple" onClick={onCharacterClick} limit={5} />
+                <TagsContainer tags={video.tags} color="slate" onClick={onTagClick} limit={10} />
             </div>
-        </div>
+        </a>
     );
 }
 

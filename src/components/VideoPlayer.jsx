@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { Play, Pause, Volume2, VolumeX, Maximize, Minimize, Settings, SkipBack, SkipForward, RefreshCcw, RotateCcw } from 'lucide-react';
+import { Play, Pause, Volume2, VolumeX, Maximize, Minimize, Settings, SkipBack, SkipForward, RefreshCcw, RotateCcw, Volume1, RefreshCw } from 'lucide-react';
 import useMyStorage from '../utils/localStorage';
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -51,10 +51,14 @@ function VideoPlayer({
     const controlsTimeoutRef = useRef(null);
     const lastTapRef = useRef({ time: 0, x: 0 });
     const doubleTapTimerRef = useRef(null);
+    // Suppresses the synthetic click that browsers fire ~300ms after touchend,
+    // preventing togglePlay from firing on touch devices.
+    const suppressClickRef = useRef(false);
+    // Signals canplay handler to auto-play when the video is ready,
+    // avoiding the race condition of calling play() before data is available.
+    const shouldAutoPlayRef = useRef(false);
 
     // ── Apply volume/muted to video element whenever they change ─────────────
-    // This fixes the bug where volume/muted state from localStorage was never
-    // pushed to the actual <video> element after src changes or on mount.
     useEffect(() => {
         const video = videoRef.current;
         if (!video) return;
@@ -88,12 +92,18 @@ function VideoPlayer({
         if (videoId) {
             const saved = progressMapRef.current[videoId];
             if (saved && saved > 5) {
+                // Show resume prompt — user must choose before playback starts
+                shouldAutoPlayRef.current = false;
                 setResumePrompt({ time: saved });
             } else {
                 setResumePrompt(null);
+                // Signal canplay handler to start playback once data is ready
+                shouldAutoPlayRef.current = true;
             }
         } else {
             setResumePrompt(null);
+            // Signal canplay handler to start playback once data is ready
+            shouldAutoPlayRef.current = true;
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [videoUrl, videoId]);
@@ -125,11 +135,6 @@ function VideoPlayer({
             if (videoId && d > 0 && t > 5 && t < d * 0.8) {
                 setProgressMap(prev => ({ ...prev, [videoId]: t }));
             }
-
-            // Legacy autoPlayNext via timeupdate (kept for compatibility)
-            if (autoPlayNext && hasNext && d > 0 && t >= d - 1) {
-                // Handled in onEnded now; skip here to avoid double-trigger
-            }
         };
 
         const onPlay = () => setIsPlaying(true);
@@ -160,7 +165,17 @@ function VideoPlayer({
             }
         };
 
-        const onCanPlay = () => { setIsLoading(false); setError(null); };
+        const onCanPlay = () => {
+            setIsLoading(false);
+            setError(null);
+            // Consume the auto-play signal set by the reset effect.
+            // Using canplay (not loadedmetadata) ensures enough data is buffered
+            // before play() is called, preventing the pause/stutter race condition.
+            if (shouldAutoPlayRef.current) {
+                shouldAutoPlayRef.current = false;
+                video.play().catch(() => {});
+            }
+        };
         const onWaiting = () => setIsLoading(true);
         const onError = () => { setError('Failed to load video'); setIsLoading(false); };
         const onLoadStart = () => setIsLoading(true);
@@ -295,22 +310,18 @@ function VideoPlayer({
         if (v > 0) lastVolumeRef.current = v;
         setVolume(v);
         setIsMuted(v === 0);
-        // volume effect will sync to video element
     };
 
     const toggleMute = () => {
         const video = videoRef.current;
         if (!video) return;
         if (isMuted) {
-            // Unmute — restore last known volume
             const restore = lastVolumeRef.current > 0 ? lastVolumeRef.current : 1;
             setIsMuted(false);
             setVolume(restore);
         } else {
-            // Mute — remember current volume first
             if (volume > 0) lastVolumeRef.current = volume;
             setIsMuted(true);
-            // Keep volume state so slider doesn't reset; video.muted handles silence
         }
     };
 
@@ -352,6 +363,12 @@ function VideoPlayer({
     const handleTap = useCallback((e) => {
         if (e.target.closest('[data-controls]')) return;
 
+        // Always suppress the synthetic click (~300ms after touchend) so the
+        // video's onClick never fires togglePlay on touch devices.
+        suppressClickRef.current = true;
+        clearTimeout(suppressClickRef._timer);
+        suppressClickRef._timer = setTimeout(() => { suppressClickRef.current = false; }, 400);
+
         const now = Date.now();
         const rect = containerRef.current?.getBoundingClientRect();
         const tapX = e.changedTouches?.[0]?.clientX ?? e.clientX ?? 0;
@@ -361,28 +378,36 @@ function VideoPlayer({
         const timeSinceLast = now - lastTapRef.current.time;
 
         if (timeSinceLast < 300) {
-            if (doubleTapTimerRef.current) { clearTimeout(doubleTapTimerRef.current); doubleTapTimerRef.current = null; }
+            // ── Double tap: seek ──────────────────────────────────────────────
+            if (doubleTapTimerRef.current) {
+                clearTimeout(doubleTapTimerRef.current);
+                doubleTapTimerRef.current = null;
+            }
             const delta = side === 'right' ? 10 : -10;
             seekBy(delta);
             showSkipIndicator(side);
             lastTapRef.current = { time: 0, x: 0 };
+            // Show controls briefly so user can see the seek indicator
+            showAndScheduleHide();
         } else {
+            // ── Single tap: toggle controls visibility ────────────────────────
             lastTapRef.current = { time: now, x: tapX };
+            // Capture now — the timeout closure would see stale state otherwise
+            const controlsWereVisible = showControls;
+
             doubleTapTimerRef.current = setTimeout(() => {
-                if (showControls) {
-                    if (isPlaying) {
-                        if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
-                        setShowControls(false);
-                    } else {
-                        setShowControls(true);
-                    }
+                doubleTapTimerRef.current = null;
+                if (controlsWereVisible) {
+                    // Controls were visible → hide immediately
+                    if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+                    setShowControls(false);
                 } else {
+                    // Controls were hidden → reveal them
                     showAndScheduleHide();
                 }
-                doubleTapTimerRef.current = null;
-            }, 300);
+            }, 300); // wait out double-tap window before acting
         }
-    }, [showControls, isPlaying, seekBy, showAndScheduleHide]);
+    }, [showControls, seekBy, showAndScheduleHide]);
 
     // ── Helpers ───────────────────────────────────────────────────────────────
     const progressPct = duration > 0 ? (currentTime / duration) * 100 : 0;
@@ -421,7 +446,12 @@ function VideoPlayer({
                 ref={videoRef}
                 src={videoUrl}
                 className="w-full h-full object-contain"
-                onClick={togglePlay}
+                onClick={(e) => {
+                    // Touch events set suppressClickRef to block the synthetic
+                    // click that fires ~300ms after touchend on mobile.
+                    if (suppressClickRef.current) return;
+                    togglePlay();
+                }}
                 playsInline
                 crossOrigin="anonymous"
             />
@@ -452,16 +482,6 @@ function VideoPlayer({
                 </div>
             )}
 
-            {/* ── Loading spinner ───────────────────────────────────────────── */}
-            {isLoading && !resumePrompt && (
-                <div className="absolute inset-0 flex items-center justify-center bg-black/50 pointer-events-none">
-                    <div className="flex flex-col items-center gap-3">
-                        <div className="w-14 h-14 border-4 border-white/20 border-t-white rounded-full animate-spin" />
-                        <p className="text-white/80 text-sm">Loading…</p>
-                    </div>
-                </div>
-            )}
-
             {/* ── Error ─────────────────────────────────────────────────────── */}
             {error && (
                 <div className="absolute inset-0 flex items-center justify-center bg-black/80">
@@ -478,42 +498,37 @@ function VideoPlayer({
                 </div>
             )}
 
-            {/* ── Skip indicator ────────────────────────────────────────────── */}
-            {skipIndicator && (
-                <div
-                    key={skipIndicator.key}
-                    className={`absolute top-1/2 -translate-y-1/2 pointer-events-none flex flex-col items-center gap-1 animate-ping-once
-                        ${skipIndicator.side === 'left' ? 'left-8' : 'right-8'}`}
-                >
-                    <div className="bg-white/20 backdrop-blur-sm rounded-full px-4 py-2 text-white font-bold text-sm">
-                        {skipIndicator.side === 'left' ? '« 10s' : '10s »'}
-                    </div>
-                </div>
-            )}
-
             {/* ── Controls overlay ──────────────────────────────────────────── */}
             <div
-                className={`absolute inset-0 transition-opacity duration-300 ${showControls && !resumePrompt ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+                className={`absolute inset-0 transition-opacity duration-300 flex flex-col justify-end ${showControls && !resumePrompt ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
                 style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,0.6) 0%, transparent 30%, transparent 60%, rgba(0,0,0,0.8) 100%)' }}
             >
                 {/* Center play/pause/replay button */}
                 {!error && !endedState && (
-                    <button
-                        data-controls
-                        onClick={togglePlay}
-                        className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 p-5 sm:p-6 bg-red-500/90 hover:bg-red-500 rounded-full transition hover:scale-110 shadow-2xl"
-                    >
-                        {isLoading
-                            ? <RefreshCcw className="w-10 h-10 sm:w-12 sm:h-12 text-white animate-spin" />
-                            : isPlaying
-                                ? <Pause className="w-10 h-10 sm:w-12 sm:h-12 text-white" fill="currentColor" />
-                                : <Play className="w-10 h-10 sm:w-12 sm:h-12 text-white" fill="currentColor" />
-                        }
-                    </button>
+                    <div className='flex-1 flex items-center justify-center cursor-pointer'>
+                        <div className="pointer-events-none flex-1 flex flex-col items-center gap-1 animate-ping-once">
+                            {skipIndicator?.side === 'left' && <div className="bg-white/20 backdrop-blur-sm rounded-full px-4 py-2 text-white font-bold text-sm">« 10s</div>}
+                        </div>
+
+                        <button 
+                            onClick={togglePlay}
+                            className="p-5 sm:p-6 bg-red-500 rounded-full transition hover:scale-110 shadow-2xl opacity-40">
+                            {isLoading
+                                ? <RefreshCw className="w-10 h-10 sm:w-12 sm:h-12 text-white animate-spin" />
+                                : isPlaying
+                                    ? <Pause className="w-10 h-10 sm:w-12 sm:h-12 text-white" fill="currentColor" />
+                                    : <Play className="w-10 h-10 sm:w-12 sm:h-12 text-white" fill="currentColor" />
+                            }
+                        </button>
+
+                        <div className="pointer-events-none flex-1 flex flex-col items-center gap-1 animate-ping-once">
+                            {skipIndicator?.side === 'right' && <div className="bg-white/20 backdrop-blur-sm rounded-full px-4 py-2 text-white font-bold text-sm">10s »</div>}
+                        </div>
+                    </div>
                 )}
 
                 {/* Bottom controls */}
-                <div className="absolute bottom-0 left-0 right-0 p-3 sm:p-4 space-y-2" data-controls>
+                <div className="px-3 pb-3 sm:px-4 sm:pb-4 space-y-2" data-controls>
                     {/* Progress bar */}
                     <div
                         className="h-1.5 bg-white/30 rounded-full cursor-pointer group relative"
@@ -572,9 +587,13 @@ function VideoPlayer({
                             {/* Volume */}
                             <div className="flex items-center gap-1 group">
                                 <button onClick={toggleMute} className="p-1.5 sm:p-2 hover:bg-white/20 rounded-lg transition">
-                                    {isMuted || volume === 0
+                                    {(isMuted || volume === 0)
                                         ? <VolumeX className="w-5 h-5 sm:w-6 sm:h-6 text-red-500" />
-                                        : <Volume2 className="w-5 h-5 sm:w-6 sm:h-6 text-red-500" />
+                                        : (
+                                            volume < 0.5 
+                                                ? <Volume1 className="w-5 h-5 sm:w-6 sm:h-6 text-red-500" /> 
+                                                : <Volume2 className="w-5 h-5 sm:w-6 sm:h-6 text-red-500" />
+                                        )
                                     }
                                 </button>
                                 <input
