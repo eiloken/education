@@ -10,6 +10,8 @@ function CreateSeries({ mode = 'create' }) {
     const { id } = useParams();
     const thumbInputRef = useRef(null);
 
+    const [isDragging, setIsDragging] = useState(false);
+
     const [pageLoading, setPageLoading] = useState(mode === 'edit');
     const [saving, setSaving] = useState(false);
     const [existingSeries, setExistingSeries] = useState(null);
@@ -62,16 +64,23 @@ function CreateSeries({ mode = 'create' }) {
         setFormData(prev => ({ ...prev, [name]: value }));
     };
 
-    const addItem = (field, value, setInput) => {
-        const trimmed = value.trim();
-        if (trimmed && !formData[field].includes(trimmed)) {
-            setFormData(prev => ({ ...prev, [field]: [...prev[field], trimmed] }));
-            setInput("");
-        }
+    const handleDragOver = (e) => {
+        e.preventDefault();
+        setIsDragging(true);
     };
 
-    const removeItem = (field, value) => {
-        setFormData(prev => ({ ...prev, [field]: prev[field].filter(v => v !== value) }));
+    const handleDragLeave = (e) => {
+        e.preventDefault();
+        setIsDragging(false);
+    };
+
+    const handleDrop = (e) => {
+        e.preventDefault();
+        setIsDragging(false);
+        const file = e.dataTransfer.files[0];
+        if (!file || !file.type.startsWith('image/')) return;
+        setThumbnailFile(file);
+        setThumbnailPreview(URL.createObjectURL(file));
     };
 
     const handleSubmit = async () => {
@@ -198,14 +207,19 @@ function CreateSeries({ mode = 'create' }) {
                             {/* Preview */}
                             <div
                                 onClick={() => thumbInputRef.current?.click()}
-                                className="w-48 h-28 shrink-0 rounded-lg overflow-hidden bg-slate-800 border-2 border-dashed border-slate-600 hover:border-red-500 transition cursor-pointer flex items-center justify-center"
+                                onDragOver={handleDragOver} 
+                                onDragLeave={handleDragLeave} 
+                                onDrop={handleDrop}
+                                className={`w-48 h-28 shrink-0 rounded-lg overflow-hidden bg-slate-800 border-2 border-dashed transition cursor-pointer flex items-center justify-center
+                                    ${isDragging ? 'border-red-400 bg-slate-700 scale-105' : 'border-slate-600 hover:border-red-500'}    
+                                `}
                             >
                                 {thumbnailPreview ? (
                                     <img src={thumbnailPreview} alt="Thumbnail preview" className="w-full h-full object-cover" />
                                 ) : (
                                     <div className="text-center text-slate-500">
                                         <Image className="w-8 h-8 mx-auto mb-1" />
-                                        <p className="text-xs">Click to upload</p>
+                                        <p className="text-xs">{isDragging ? 'Drop to upload' : 'Click or drop image'}</p>
                                     </div>
                                 )}
                             </div>

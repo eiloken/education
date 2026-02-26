@@ -42,6 +42,8 @@ function UploadVideo({ mode = 'new' }) {
     const [availableActors, setAvailableActors] = useState([]);
     const [availableSeries, setAvailableSeries] = useState([]);
 
+    const [isDragging, setIsDragging] = useState(false);
+
     // In 'new' mode: optionally assign to an existing series
     const [assignToSeries, setAssignToSeries] = useState(false);
 
@@ -153,6 +155,31 @@ function UploadVideo({ mode = 'new' }) {
                 ...prev,
                 [field]: prev[field].includes(trimmed) ? prev[field].filter(i => i !== trimmed) : [...prev[field], trimmed]
             }));
+        }
+    };
+
+    const handleDragOver = (e) => {
+        e.preventDefault();
+        setIsDragging(true);
+    };
+
+    const handleDragLeave = (e) => {
+        e.preventDefault();
+        setIsDragging(false);
+    };
+
+    const handleDrop = (e) => {
+        e.preventDefault();
+        setIsDragging(false);
+        const file = e.dataTransfer.files[0];
+        if (!file) return;
+
+        const validExt = /\.(mp4|mkv|avi|mov|wmv|webm|flv)$/i.test(file.name);
+        if (!validExt) { toast.error("Please select a valid video file"); return; }
+        setVideoFile(file);
+        if (mode !== 'edit') {
+            const ext = file.name.split('.').pop().toLowerCase();
+            setFormData(prev => ({ ...prev, title: file.name.replace(`.${ext}`, '') }));
         }
     };
 
@@ -410,7 +437,14 @@ function UploadVideo({ mode = 'new' }) {
 
                         {(mode !== 'edit' || replaceVideo) && (
                             <>
-                                <div className="border-2 border-dashed border-slate-700 rounded-lg p-8 text-center hover:border-red-500 transition">
+                                <div 
+                                    onDragOver={handleDragOver} 
+                                    onDragLeave={handleDragLeave} 
+                                    onDrop={handleDrop}
+                                    className={`border-2 border-dashed rounded-lg p-8 text-center transition ${
+                                        isDragging ? 'border-red-500 scale-105 bg-slate-700' : 'border-slate-700 hover:border-red-500'
+                                    }`}
+                                >
                                     <input
                                         type="file"
                                         accept="video/*"
@@ -431,7 +465,7 @@ function UploadVideo({ mode = 'new' }) {
                                             </div>
                                         ) : (
                                             <div>
-                                                <p className="text-slate-300 font-medium">Click to select video</p>
+                                                <p className="text-slate-300 font-medium">{isDragging ? 'Drop video file here.' : 'Click or drag video file here.'}</p>
                                                 <p className="text-sm text-slate-500 mt-1">MP4, MKV, AVI, MOV, WMV, WebM up to 10GB</p>
                                             </div>
                                         )}

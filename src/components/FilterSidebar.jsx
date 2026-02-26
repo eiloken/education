@@ -26,6 +26,8 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters }) {
     // Search within filter lists for large datasets
     const [actorSearch, setActorSearch] = useState('');
     const [characterSearch, setCharacterSearch] = useState('');
+    const [studioSearch, setStudioSearch] = useState('');
+    const [tagSearch, setTagSearch] = useState('');
 
     const [localFilters, setLocalFilters] = useState(DEFAULT_FILTERS);
 
@@ -112,12 +114,9 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters }) {
 
     return (
         <>
-            {/* Backdrop */}
-            <div onClick={onClose} className="fixed inset-0 bg-black/60 z-40" />
-
             {/* Sidebar */}
-            <div className="fixed left-0 top-0 bottom-0 w-80 bg-slate-900 z-50 overflow-y-auto shadow-2xl">
-                <div className="p-6">
+            <div className="fixed inset-0 bg-slate-900 z-50 overflow-y-auto flex flex-col items-center justify-between">
+                <div className="p-6 container">
                     {/* Header */}
                     <div className="flex items-center justify-between mb-6">
                         <h2 className="text-2xl font-bold text-white flex items-center gap-2">
@@ -205,118 +204,49 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters }) {
                     </Section>
 
                     {/* Studios */}
-                    <Section title={`Studios${localFilters.studios.length > 0 ? ` (${localFilters.studios.length})` : ''}`}>
-                        <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto p-2 bg-slate-800 rounded-lg">
-                            {studios.length === 0 ? (
-                                <p className="text-slate-500 text-xs">No studios available</p>
-                            ) : (
-                                studios.map(s => (
-                                    <button
-                                        key={s}
-                                        onClick={() => toggleItem('studios', s)}
-                                        className={`px-2.5 py-1 rounded-full text-xs transition ${
-                                            localFilters.studios.includes(s)
-                                                ? 'bg-red-500 text-white'
-                                                : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-                                        }`}
-                                    >
-                                        {s}
-                                    </button>
-                                ))
-                            )}
-                        </div>
-                    </Section>
+                    {studios && studios.length > 0 && (
+                        <TagsSection 
+                            title="Studios: " 
+                            field="studios" 
+                            localFilters={localFilters} 
+                            ontoggleItem={toggleItem} 
+                            tags={studios}
+                        />
+                    )}
+                    
 
                     {/* Actors */}
-                    <Section title={`Actors${localFilters.actors.length > 0 ? ` (${localFilters.actors.length})` : ''}`}>
-                        {actors.length > 6 && (
-                            <input
-                                type="text"
-                                value={actorSearch}
-                                onChange={(e) => setActorSearch(e.target.value)}
-                                placeholder="Search actors..."
-                                className="w-full px-3 py-1.5 bg-slate-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 text-xs mb-2"
-                            />
-                        )}
-                        <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto p-2 bg-slate-800 rounded-lg">
-                            {filteredActors.length === 0 ? (
-                                <p className="text-slate-500 text-xs">
-                                    {actorSearch ? `No actors matching "${actorSearch}"` : 'No actors available'}
-                                </p>
-                            ) : (
-                                filteredActors.map(a => (
-                                    <button
-                                        key={a}
-                                        onClick={() => toggleItem('actors', a)}
-                                        className={`px-2.5 py-1 rounded-full text-xs transition ${
-                                            localFilters.actors.includes(a)
-                                                ? 'bg-blue-500 text-white'
-                                                : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-                                        }`}
-                                    >
-                                        {a}
-                                    </button>
-                                ))
-                            )}
-                        </div>
-                    </Section>
+                    {actors && actors.length > 0 && (
+                        <TagsSection 
+                            title="Actors: " 
+                            field="actors" 
+                            localFilters={localFilters} 
+                            ontoggleItem={toggleItem} 
+                            tags={actors}
+                        />
+                    )}
 
                     {/* Characters */}
-                    <Section title={`Characters${localFilters.characters.length > 0 ? ` (${localFilters.characters.length})` : ''}`}>
-                        {characters.length > 6 && (
-                            <input
-                                type="text"
-                                value={characterSearch}
-                                onChange={(e) => setCharacterSearch(e.target.value)}
-                                placeholder="Search characters..."
-                                className="w-full px-3 py-1.5 bg-slate-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 text-xs mb-2"
-                            />
-                        )}
-                        <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto p-2 bg-slate-800 rounded-lg">
-                            {filteredCharacters.length === 0 ? (
-                                <p className="text-slate-500 text-xs">
-                                    {characterSearch ? `No characters matching "${characterSearch}"` : 'No characters available'}
-                                </p>
-                            ) : (
-                                filteredCharacters.map(c => (
-                                    <button
-                                        key={c}
-                                        onClick={() => toggleItem('characters', c)}
-                                        className={`px-2.5 py-1 rounded-full text-xs transition ${
-                                            localFilters.characters.includes(c)
-                                                ? 'bg-purple-500 text-white'
-                                                : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-                                        }`}
-                                    >
-                                        {c}
-                                    </button>
-                                ))
-                            )}
-                        </div>
-                    </Section>
+                    {characters && characters.length > 0 && (
+                        <TagsSection 
+                            title="Characters: " 
+                            field="characters" 
+                            localFilters={localFilters} 
+                            ontoggleItem={toggleItem} 
+                            tags={characters}
+                        />
+                    )}
 
                     {/* Tags */}
-                    <Section title={`Tags${localFilters.tags.length > 0 ? ` (${localFilters.tags.length})` : ''}`}>
-                        <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto p-2 bg-slate-800 rounded-lg">
-                            {tags.length === 0 ? (
-                                <p className="text-slate-500 text-xs">No tags available</p>
-                            ) : (
-                                tags.map(t => (
-                                    <button
-                                        key={t}
-                                        onClick={() => toggleItem('tags', t)}
-                                        className={`px-2.5 py-1 rounded-full text-xs transition ${
-                                            localFilters.tags.includes(t)
-                                                ? 'bg-red-500 text-white'
-                                                : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-                                        }`}
-                                    >
-                                        {t}
-                                    </button>
-                                ))
-                            )}
-                        </div>
-                    </Section>
+                    {tags && tags.length > 0 && (
+                        <TagsSection 
+                            title="Tags: " 
+                            field="tags" 
+                            localFilters={localFilters} 
+                            ontoggleItem={toggleItem} 
+                            tags={tags}
+                        />
+                    )}
 
                     {/* Active filter summary */}
                     {activeCount > 0 && (
@@ -332,9 +262,11 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters }) {
                             </div>
                         </div>
                     )}
-
+                </div>
+                
+                <div className="p-6 container">
                     {/* Actions */}
-                    <div className="space-y-2">
+                    <div className="flex items-center flex-col sm:flex-row gap-4">
                         <button
                             onClick={applyFilters}
                             className="w-full py-3 bg-red-500 text-white rounded-lg font-semibold hover:bg-red-600 transition"
@@ -343,7 +275,7 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters }) {
                         </button>
                         <button
                             onClick={resetFilters}
-                            className="w-full py-2.5 bg-slate-700 text-white rounded-lg font-medium hover:bg-slate-600 transition text-sm"
+                            className="w-full py-3 bg-slate-700 text-white rounded-lg font-medium hover:bg-slate-600 transition"
                         >
                             Reset All
                         </button>
@@ -357,6 +289,60 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters }) {
                 </div>
             </div>
         </>
+    );
+}
+
+function TagsSection({ title, field, tags, localFilters, ontoggleItem }) {
+    const [searchTerm, setSearchTerm] = useState('');
+    const [filteredTags, setFilteredTags] = useState(tags || []);
+
+    useEffect(() => {
+        if (!searchTerm) {
+            setFilteredTags(tags);
+            return;
+        }
+
+        const debounce = setTimeout(() => {
+            const matched = tags.filter((t) => t.toLowerCase().includes(searchTerm.toLowerCase()));
+            setFilteredTags(matched);
+        }, 500);
+
+        return () => clearTimeout(debounce);
+    }, [searchTerm, tags]);
+
+    return (
+        <Section title={`${title}${localFilters[field].length > 0 ? ` (${localFilters[field].length})` : ''}`}>
+            {tags.length > 6 && (
+                <input
+                    type="text"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    placeholder="Filter..."
+                    className="w-full px-3 py-1.5 bg-slate-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 text-xs mb-2"
+                />
+            )}
+            <div className="flex flex-wrap gap-1.5 max-h-125 overflow-y-auto p-2 bg-slate-800 rounded-lg">
+                {filteredTags.length === 0 ? (
+                    <p className="text-slate-500 text-xs">
+                        {searchTerm ? `No results matching "${searchTerm}"` : 'No tags available'}
+                    </p>
+                ) : (
+                    filteredTags.map(tag => (
+                        <button
+                            key={tag}
+                            onClick={() => ontoggleItem(field, tag)}
+                            className={`px-2.5 py-1 rounded-full text-xs transition ${
+                                localFilters[field].includes(tag)
+                                    ? 'bg-red-500 text-white'
+                                    : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                            }`}
+                        >
+                            {tag}
+                        </button>
+                    ))
+                )}
+            </div>
+        </Section>
     );
 }
 
