@@ -1,96 +1,13 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { generalAPI } from "../api/api";
 import { Clock, Eye, Film, Heart, Layers, Play } from "lucide-react";
 import { TagsContainer } from "./SeriesCard";
+import { formatDuration, formatViews } from "../utils/format";
 
-function VideoCard({ video, viewMode = 'grid', onToggleFavorite, onTagClick, onStudioClick, onCharacterClick, onActorClick }) {
-    const formatDuration = (seconds) => {
-        if (!seconds) return 'N/A';
-        const hours = Math.floor(seconds / 3600);
-        const minutes = Math.floor((seconds % 3600) / 60);  
-        const secondsRemaining = Math.floor(seconds % 60);
-        return hours > 0 ? `${hours}h ${minutes}m` : (minutes > 0 ? `${minutes}m ${secondsRemaining}s` : `${secondsRemaining}s`);
-    };
-
-    // List view layout
-    if (viewMode === "list") {
-        return (
-            <a
-                href={`/video/${video._id}`}
-                className="flex gap-4 bg-slate-900 rounded-lg overflow-hidden border border-slate-800 hover:border-slate-600 transition cursor-pointer group"
-            >
-                {/* Thumbnail */}
-                <div className="relative w-48 bg-slate-800 overflow-hidden">
-                    {video.thumbnailPath ? (
-                        <img
-                            src={generalAPI.thumbnailUrl(video.thumbnailPath)}
-                            alt={video.title}
-                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                        />
-                    ) : (
-                        <div className="w-full h-full flex items-center justify-center">
-                            <Film className="w-10 h-10 text-slate-600" />
-                        </div>
-                    )}
-                    
-                    {/* Play overlay */}
-                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                        <Play className="w-10 h-10 text-white" fill="white" />
-                    </div>
-                </div>
-
-                {/* Info */}
-                <div className="flex-1 p-4 min-w-0">
-                    <div className="flex items-start justify-between gap-2 mb-1">
-                        <h3 className="font-bold text-white text-lg leading-tight line-clamp-1 group-hover:text-red-400 transition">
-                            {video.title}
-                        </h3>
-                        <button
-                            onClick={(e) => { 
-                                e.preventDefault();
-                                e.stopPropagation(); 
-                                onToggleFavorite?.(); 
-                            }}
-                            className="shrink-0 p-1"
-                        >
-                            <Heart
-                                className={`w-5 h-5 transition ${video.isFavorite ? 'text-red-500 fill-red-500' : 'text-slate-500 hover:text-red-400'}`}
-                                fill={video.isFavorite ? 'currentColor' : 'none'}
-                            />
-                        </button>
-                    </div>
-
-                    <div className="flex items-center gap-3 text-sm text-slate-400 mb-2">
-                        <span className="flex items-center gap-1">
-                            <Eye className="w-3 h-3" />
-                            {video.views || 0} views
-                        </span>
-                        {video.duration && (
-                            <span className="flex items-center gap-1">
-                                <Clock className="w-3 h-3" />
-                                {formatDuration(video.duration)}
-                            </span>
-                        )}
-                        {video.year && <span>{video.year}</span>}
-                    </div>
-
-                    {video.description && (
-                        <p className="text-slate-400 text-sm line-clamp-2">{video.description}</p>
-                    )}
-
-                    <TagsContainer tags={video.studios} color="blue" onClick={onStudioClick} limit={5} />
-                    <TagsContainer tags={video.actors} color="green" onClick={onActorClick} limit={5} />
-                    <TagsContainer tags={video.characters} color="purple" onClick={onCharacterClick} limit={5} />
-                    <TagsContainer tags={video.tags} color="slate" onClick={onTagClick} limit={10} />
-                </div>
-            </a>
-        );
-    }
-
-    // Grid mode
+function VideoCard({ video, onToggleFavorite, onTagClick, onStudioClick, onCharacterClick, onActorClick }) {
     return (
         <a
-            href={`/video/${video._id}`}
+            href={video.seriesId ? `/series/${video.seriesId}?ep=${video._id}` : `/video/${video._id}`}
             className="relative bg-slate-900 rounded-lg overflow-hidden border border-slate-800 hover:border-slate-600 transition cursor-pointer group"
         >
             {/* Thumbnail */}
@@ -141,7 +58,7 @@ function VideoCard({ video, viewMode = 'grid', onToggleFavorite, onTagClick, onS
                 <div className="flex items-center gap-3 text-sm text-slate-400 mb-2">
                     <span className="flex items-center gap-1">
                         <Eye className="w-3 h-3" />
-                        {video.views || 0} views
+                        {formatViews(video.views || 0)}
                     </span>
                     {video.duration && (
                         <span className="flex items-center gap-1">
@@ -149,17 +66,16 @@ function VideoCard({ video, viewMode = 'grid', onToggleFavorite, onTagClick, onS
                             {formatDuration(video.duration)}
                         </span>
                     )}
-                    {video.year && <span>{video.year}</span>}
                 </div>
 
                 {video.description && (
                     <p className="text-slate-400 text-sm line-clamp-2">{video.description}</p>
                 )}
 
-                <TagsContainer tags={video.studios} color="blue" onClick={onStudioClick} limit={5} />
-                <TagsContainer tags={video.actors} color="green" onClick={onActorClick} limit={5} />
-                <TagsContainer tags={video.characters} color="purple" onClick={onCharacterClick} limit={5} />
-                <TagsContainer tags={video.tags} color="slate" onClick={onTagClick} limit={10} />
+                <TagsContainer tags={video.studios} color="blue" onClick={onStudioClick} limit={2} />
+                <TagsContainer tags={video.actors} color="green" onClick={onActorClick} limit={2} />
+                <TagsContainer tags={video.characters} color="purple" onClick={onCharacterClick} limit={2} />
+                <TagsContainer tags={video.tags} color="slate" onClick={onTagClick} limit={5} />
             </div>
         </a>
     );

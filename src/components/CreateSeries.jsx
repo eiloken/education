@@ -94,10 +94,6 @@ function CreateSeries({ mode = 'create' }) {
         const data = new FormData();
         data.append('title', formData.title.trim());
         data.append('description', formData.description || "");
-        data.append('tags', JSON.stringify(formData.tags));
-        data.append('studios', JSON.stringify(formData.studios));
-        data.append('actors', JSON.stringify(formData.actors));
-        data.append('characters', JSON.stringify(formData.characters));
         if (formData.year) data.append('year', formData.year);
         if (thumbnailFile) data.append('thumbnail', thumbnailFile);
 

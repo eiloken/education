@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { forwardRef, useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { generalAPI, seriesAPI, videoAPI } from "../api/api";
 import toast from "react-hot-toast";
@@ -8,6 +8,7 @@ import {
     Clock, Edit, Eye, Film, Heart, Layers, Play, Plus, Tag, Trash2, Users, UserCircle
 } from "lucide-react";
 import { MetaChip } from "./SeriesCard";
+import { formatDuration, formatFileSize } from "../utils/format";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SeriesDetail — shown when navigating to /series/:id
@@ -24,6 +25,8 @@ export function SeriesDetail() {
     const [selectedSeason, setSelectedSeason] = useState(1);
     const [loading, setLoading] = useState(true);
     const [episodeListOpen, setEpisodeListOpen] = useState(true);
+    const activeEpisodeRef = useRef(null);
+    const episodeListRef = useRef(null);
 
     const fetchData = useCallback(async () => {
         try {
@@ -54,6 +57,19 @@ export function SeriesDetail() {
     }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => { fetchData(); }, [fetchData]);
+
+    // Scroll active episode into view within the list container only (not the page)
+    useEffect(() => {
+        if (!currentEpisode || !activeEpisodeRef.current || !episodeListRef.current) return;
+        const t = setTimeout(() => {
+            const container = episodeListRef.current;
+            const row = activeEpisodeRef.current;
+            if (!container || !row) return;
+            // Center the active row within the container
+            container.scrollTop = row.offsetTop - container.offsetTop - (container.clientHeight / 2) + (row.clientHeight / 2);
+        }, 150);
+        return () => clearTimeout(t);
+    }, [currentEpisode?._id]);
 
     const handleEpisodeSelect = (ep) => {
         setCurrentEpisode(ep);
@@ -227,6 +243,7 @@ export function SeriesDetail() {
                                     hasPrevious={currentIdx > 0}
                                     hasNext={currentIdx < episodes.length - 1}
                                     autoPlayNext={false}
+                                    onView={() => videoAPI.trackView(currentEpisode._id)}
                                 />
                             ) : series.thumbnailPath ? (
                                 <img src={generalAPI.thumbnailUrl(series.thumbnailPath)} alt={series.title} className="w-full h-full object-cover" />
@@ -344,13 +361,14 @@ export function SeriesDetail() {
                                                     ))}
                                                 </div>
                                             )}
-                                            <div className="space-y-1.5 max-h-96 overflow-y-auto">
+                                            <div ref={episodeListRef} className="space-y-1.5 max-h-96 overflow-y-auto">
                                                 {(episodesBySeason[selectedSeason] || []).map(ep => (
                                                     <EpisodeRow
                                                         key={ep._id}
                                                         episode={ep}
                                                         isActive={currentEpisode?._id === ep._id}
                                                         onSelect={() => handleEpisodeSelect(ep)}
+                                                        ref={currentEpisode?._id === ep._id ? activeEpisodeRef : null}
                                                     />
                                                 ))}
                                             </div>
@@ -473,6 +491,7 @@ function VideoDetail() {
                                 videoId={id}
                                 videoUrl={videoAPI.getStreamUrl(id)}
                                 availableQualities={video.resolutions?.map(r => r.quality) || []}
+                                onView={() => videoAPI.trackView(id)}
                             />
                         </div>
 
@@ -542,9 +561,10 @@ function VideoDetail() {
 // Shared sub-components
 // ─────────────────────────────────────────────────────────────────────────────
 
-function EpisodeRow({ episode, isActive, onSelect }) {
+const EpisodeRow = forwardRef(function EpisodeRow({ episode, isActive, onSelect }, ref) {
     return (
         <div
+            ref={ref}
             onClick={onSelect}
             className={`flex gap-3 p-2.5 sm:p-3 rounded-lg cursor-pointer transition group ${
                 isActive ? 'bg-red-500/20 border border-red-500/40' : 'bg-slate-800/50 hover:bg-slate-700/50'
@@ -582,7 +602,7 @@ function EpisodeRow({ episode, isActive, onSelect }) {
             </div>
         </div>
     );
-}
+});
 
 /** Inline episode-specific metadata tags shown below the now-playing info */
 function EpisodeMetadataInline({ episode }) {
@@ -686,26 +706,6 @@ function NotFoundScreen({ message }) {
             </button>
         </div>
     );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
-function formatDuration(seconds) {
-    if (!seconds) return 'Unknown';
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    const s = Math.floor(seconds % 60);
-    if (h > 0) return `${h}h ${m}m`;
-    return `${m}m ${s}s`;
-}
-
-function formatFileSize(bytes) {
-    if (!bytes) return "Unknown";
-    const gb = bytes / (1024 * 1024 * 1024);
-    if (gb >= 1) return `${gb.toFixed(2)} GB`;
-    const mb = bytes / (1024 * 1024);
-    return `${mb.toFixed(2)} MB`;
 }
 
 export default VideoDetail;
