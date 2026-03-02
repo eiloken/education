@@ -5,6 +5,7 @@ import fs from 'fs';
 import dotenv from 'dotenv';
 import videoRoutes from './routes/videos.js';
 import seriesRoutes from './routes/series.js';
+import statsRoutes from './routes/stats.js';
 
 dotenv.config();
 
@@ -61,6 +62,7 @@ mongoose.connect(process.env.MONGODB_URL || 'mongodb://localhost:27017/vibeflix'
 
 app.use('/api/videos', videoRoutes);
 app.use('/api/series', seriesRoutes);
+app.use('/api/stats', statsRoutes);
 
 app.get('/api/health', (req, res) => {
     res.json({

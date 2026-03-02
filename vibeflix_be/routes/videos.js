@@ -34,9 +34,11 @@ const upload = multer({
 });
 
 async function generateThumbnail(videoPath, outputPath) {
+    const duration = await getVideoDuration(videoPath);
+    const seconds = (duration && Math.floor(duration / 2)) || 5;
     return new Promise((resolve) => {
         Ffmpeg(videoPath)
-            .seekInput(5).frames(1)
+            .seekInput(seconds).frames(1)
             .outputOptions("-vf", "scale=320:-1")
             .output(outputPath)
             .on('end', () => resolve(true))

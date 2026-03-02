@@ -109,3 +109,11 @@ export const seriesAPI = {
     getActors:     async (id) => (await axios.get(`${API_URL}/api/series/metadata/${id}/actors`)).data,
     getCharacters: async (id) => (await axios.get(`${API_URL}/api/series/metadata/${id}/characters`)).data,
 };
+
+// ─── Stats API ────────────────────────────────────────────────────────────────
+export const statsAPI = {
+    getStats: async () => {
+        const response = await axios.get(`${API_URL}/api/stats`);
+        return response.data;
+    },
+};

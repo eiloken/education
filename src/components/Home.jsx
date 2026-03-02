@@ -7,7 +7,8 @@ import {
     ArrowLeft, TrendingUp, Star, Clock, Flame, Zap,
     View,
     Heart,
-    CalendarDays
+    CalendarDays,
+    LayoutDashboard
 } from "lucide-react";
 import VideoCard from "./VideoCard";
 import SeriesCard from "./SeriesCard";
@@ -15,6 +16,7 @@ import FilterSidebar, { DEFAULT_FILTERS, cycleItem } from "./FilterSidebar";
 import Pagination from "./Pagination";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import useMyStorage from "../utils/localStorage";
+import Dashboard from "./Dashboard";
 
 // ─── Util: ISO string for N days ago ─────────────────────────────────────────
 const daysAgoISO = (n) => {
@@ -50,6 +52,7 @@ const DISPLAY_MODES = [
     { value: 'all',    label: 'All',    icon: null   },
     { value: 'series', label: 'Series', icon: Layers },
     { value: 'videos', label: 'Videos', icon: Film   },
+    { value: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
 ];
 
 function HomeSection({ section, items, cardProps, handleShowAll, handleToggleFavoriteSeries, handleToggleFavoriteVideo }) {
@@ -516,68 +519,72 @@ function Home() {
                             VIBEFLIX
                         </h1>
 
-                        <div className="flex items-center gap-1.5 sm:gap-2 justify-end">
-                            <div className="hidden sm:block">
-                                <SearchBox searchTerm={searchTerm} setSearchTerm={setSearchTerm} />
-                            </div>
-                            <button
-                                onClick={() => setShowFilters(true)}
-                                className={`flex items-center px-2 py-2 sm:px-3 rounded-lg text-white transition ${
-                                    hasFilters
-                                        ? 'bg-red-500 text-white'
-                                        : 'hover:bg-slate-700'
-                                }`}
-                            >
-                                <Filter className="w-4 h-4 sm:w-5 sm:h-5" />
-                                <span className="hidden sm:inline text-sm">
-                                    {filterCount > 0 ? ` (${filterCount})` : ''}
-                                </span>
-                            </button>
+                        {displayMode !== 'dashboard' && (
+                            <div className="flex items-center gap-1.5 sm:gap-2 justify-end">
+                                <div className="hidden sm:block">
+                                    <SearchBox searchTerm={searchTerm} setSearchTerm={setSearchTerm} />
+                                </div>
+                                <button
+                                    onClick={() => setShowFilters(true)}
+                                    className={`flex items-center px-2 py-2 sm:px-3 rounded-lg text-white transition ${
+                                        hasFilters
+                                            ? 'bg-red-500 text-white'
+                                            : 'hover:bg-slate-700'
+                                    }`}
+                                >
+                                    <Filter className="w-4 h-4 sm:w-5 sm:h-5" />
+                                    <span className="hidden sm:inline text-sm">
+                                        {filterCount > 0 ? ` (${filterCount})` : ''}
+                                    </span>
+                                </button>
 
-                            <button
-                                onClick={() => { 
-                                    setShowQuickSearch(true); 
-                                    setTimeout(() => quickSearchRef.current?.focus(), 0); 
-                                }}
-                                className="px-2 py-2 sm:px-3 rounded-md text-white hover:bg-slate-700 transition block sm:hidden"
-                            >
-                                <Search className="w-4 h-4 sm:w-5 sm:h-5" />
-                            </button>
-                        </div>
+                                <button
+                                    onClick={() => { 
+                                        setShowQuickSearch(true); 
+                                        setTimeout(() => quickSearchRef.current?.focus(), 0); 
+                                    }}
+                                    className="px-2 py-2 sm:px-3 rounded-md text-white hover:bg-slate-700 transition block sm:hidden"
+                                >
+                                    <Search className="w-4 h-4 sm:w-5 sm:h-5" />
+                                </button>
+                            </div>
+                        )}
                     </div>
 
-                    {showQuickSearch ? (
-                        <div className="mt-2">
-                            <SearchBox 
-                                ref={quickSearchRef} 
-                                searchTerm={searchTerm} 
-                                setSearchTerm={setSearchTerm} 
-                                onBlur={() => setShowQuickSearch(false)}
-                            />
-                        </div>
-                    ) : (
-                        hasFilters && (
-                            <div className="flex flex-wrap gap-1 mt-1 max-h-20 overflow-y-auto">
-                                {filters.search && (
-                                    <FilterPill label={`"${filters.search}"`} onRemove={() => handleRemoveFilter('search')} color="slate" />
-                                )}
-                                {filters.favorite && (
-                                    <FilterPill label="❤ Favorites" onRemove={() => handleRemoveFilter('favorite')} color="red" />
-                                )}
-                                {filters.year && (
-                                    <FilterPill label={`Year: ${filters.year}`} onRemove={() => handleRemoveFilter('year')} color="green" />
-                                )}
-                                {['studios', 'actors', 'characters', 'tags'].map(field =>
-                                    <Fragment key={field}>
-                                        {(filters[field] || []).map(v => (
-                                            <FilterPill key={`inc-${v}`} label={`✓ ${v}`} onRemove={() => handleRemoveFilter(field, v)} color="green" />
-                                        ))}
-                                        {(filters[`${field}Exclude`] || []).map(v => (
-                                            <FilterPill key={`exc-${v}`} label={`✗ ${v}`} onRemove={() => handleRemoveFilter(`${field}Exclude`, v)} color="red" />
-                                        ))}
-                                    </Fragment>
-                                )}
+                    {displayMode !== 'dashboard' && (
+                        showQuickSearch ? (
+                            <div className="mt-2">
+                                <SearchBox 
+                                    ref={quickSearchRef} 
+                                    searchTerm={searchTerm} 
+                                    setSearchTerm={setSearchTerm} 
+                                    onBlur={() => setShowQuickSearch(false)}
+                                />
                             </div>
+                        ) : (
+                            hasFilters && (
+                                <div className="flex flex-wrap gap-1 mt-1 max-h-20 overflow-y-auto">
+                                    {filters.search && (
+                                        <FilterPill label={`"${filters.search}"`} onRemove={() => handleRemoveFilter('search')} color="slate" />
+                                    )}
+                                    {filters.favorite && (
+                                        <FilterPill label="❤ Favorites" onRemove={() => handleRemoveFilter('favorite')} color="red" />
+                                    )}
+                                    {filters.year && (
+                                        <FilterPill label={`Year: ${filters.year}`} onRemove={() => handleRemoveFilter('year')} color="green" />
+                                    )}
+                                    {['studios', 'actors', 'characters', 'tags'].map(field =>
+                                        <Fragment key={field}>
+                                            {(filters[field] || []).map(v => (
+                                                <FilterPill key={`inc-${v}`} label={`✓ ${v}`} onRemove={() => handleRemoveFilter(field, v)} color="green" />
+                                            ))}
+                                            {(filters[`${field}Exclude`] || []).map(v => (
+                                                <FilterPill key={`exc-${v}`} label={`✗ ${v}`} onRemove={() => handleRemoveFilter(`${field}Exclude`, v)} color="red" />
+                                            ))}
+                                        </Fragment>
+                                    )}
+                                </div>
+                            )
                         )
                     )}
                 </div>
@@ -604,157 +611,165 @@ function Home() {
                         ))}
                     </div>
 
-                    <div className="flex items-center gap-1.5 sm:gap-2">
-                        <button
-                            onClick={() => navigate('/series/create')}
-                            className="flex items-center gap-1.5 px-2 py-2 sm:px-3 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition"
-                        >
-                            <Layers className="w-4 h-4 sm:w-5 sm:h-5" />
-                            <span className="hidden sm:inline text-sm">New Series</span>
-                        </button>
+                    {displayMode !== 'dashboard' && (
+                        <div className="flex items-center gap-1.5 sm:gap-2">
+                            <button
+                                onClick={() => navigate('/series/create')}
+                                className="flex items-center gap-1.5 px-2 py-2 sm:px-3 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition"
+                            >
+                                <Layers className="w-4 h-4 sm:w-5 sm:h-5" />
+                                <span className="hidden sm:inline text-sm">New Series</span>
+                            </button>
 
-                        <button
-                            onClick={() => navigate('/upload')}
-                            className="flex items-center gap-1.5 px-2 py-2 sm:px-3 bg-red-500 hover:bg-red-600 text-white rounded-lg transition"
-                        >
-                            <Plus className="w-4 h-4 sm:w-5 sm:h-5" />
-                            <span className="hidden sm:inline text-sm">Upload</span>
-                        </button>
-                    </div>
+                            <button
+                                onClick={() => navigate('/upload')}
+                                className="flex items-center gap-1.5 px-2 py-2 sm:px-3 bg-red-500 hover:bg-red-600 text-white rounded-lg transition"
+                            >
+                                <Plus className="w-4 h-4 sm:w-5 sm:h-5" />
+                                <span className="hidden sm:inline text-sm">Upload</span>
+                            </button>
+                        </div>
+                    )}
                 </div>
 
-                {/* Detail / filtered header breadcrumb */}
-                {(homeMode === 'detail' || homeMode === 'filtered') && (
-                    <div className="flex items-center gap-3 mb-6">
-                        <button
-                            onClick={handleBackToHome}
-                            className="p-2 bg-slate-800 hover:bg-slate-700 rounded-lg transition text-white"
-                        >
-                            <ArrowLeft className="w-5 h-5" />
-                        </button>
-                        {homeMode === 'detail' && detailSection && (
-                            <div className="flex items-center gap-2">
-                                <detailSection.icon className="w-5 h-5 text-red-500" />
-                                <h2 className="text-xl font-bold text-white">{detailSection.title}</h2>
-                            </div>
-                        )}
-                        {homeMode === 'filtered' && (
-                            <div className="flex items-center gap-2">
-                                <Filter className="w-5 h-5 text-red-500" />
-                                <h2 className="text-xl font-bold text-white">Filtered Results</h2>
-                            </div>
-                        )}
-                    </div>
-                )}
-
-                {/* ── HOME: section rows ──────────────────────────────────────── */}
-                {homeMode === 'home' && (
-                    sectionsLoading ? <LoadingSpinner /> : (
-                        <div className="space-y-10">
-                            {SECTIONS.map(section => (
-                                <HomeSection 
-                                    items={buildMixedItems(sectionsData[section.id] || { videos: [], series: [] }, displayMode)} 
-                                    handleShowAll={handleShowAll} 
-                                    handleToggleFavoriteSeries={handleToggleFavoriteSeries} 
-                                    handleToggleFavoriteVideo={handleToggleFavoriteVideo} 
-                                    section={section} 
-                                    cardProps={cardProps}
-                                    key={section.id}
-                                />
-                            ))}
-                        </div>
-                    )
-                )}
-
-                {/* ── DETAIL / FILTERED: paginated grid ───────────────────────── */}
-                {(homeMode === 'detail' || homeMode === 'filtered') && (
+                {displayMode === 'dashboard' ? (
+                    <Dashboard />
+                ) : (
                     <>
-                        {!seriesLoading && !videosLoading && seriesList.length === 0 && videos.length === 0 ? (
-                            <EmptyState hasFilters={hasFilters} navigate={navigate} />
-                        ) : (
+                        {/* Detail / filtered header breadcrumb */}
+                        {(homeMode === 'detail' || homeMode === 'filtered') && (
+                            <div className="flex items-center gap-3 mb-6">
+                                <button
+                                    onClick={handleBackToHome}
+                                    className="p-2 bg-slate-800 hover:bg-slate-700 rounded-lg transition text-white"
+                                >
+                                    <ArrowLeft className="w-5 h-5" />
+                                </button>
+                                {homeMode === 'detail' && detailSection && (
+                                    <div className="flex items-center gap-2">
+                                        <detailSection.icon className="w-5 h-5 text-red-500" />
+                                        <h2 className="text-xl font-bold text-white">{detailSection.title}</h2>
+                                    </div>
+                                )}
+                                {homeMode === 'filtered' && (
+                                    <div className="flex items-center gap-2">
+                                        <Filter className="w-5 h-5 text-red-500" />
+                                        <h2 className="text-xl font-bold text-white">Filtered Results</h2>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* ── HOME: section rows ──────────────────────────────────────── */}
+                        {homeMode === 'home' && (
+                            sectionsLoading ? <LoadingSpinner /> : (
+                                <div className="space-y-10">
+                                    {SECTIONS.map(section => (
+                                        <HomeSection 
+                                            items={buildMixedItems(sectionsData[section.id] || { videos: [], series: [] }, displayMode)} 
+                                            handleShowAll={handleShowAll} 
+                                            handleToggleFavoriteSeries={handleToggleFavoriteSeries} 
+                                            handleToggleFavoriteVideo={handleToggleFavoriteVideo} 
+                                            section={section} 
+                                            cardProps={cardProps}
+                                            key={section.id}
+                                        />
+                                    ))}
+                                </div>
+                            )
+                        )}
+
+                        {/* ── DETAIL / FILTERED: paginated grid ───────────────────────── */}
+                        {(homeMode === 'detail' || homeMode === 'filtered') && (
                             <>
-                                {/* Series section */}
-                                {showSeries && (
-                                    <section className="mb-8">
-                                        {displayMode === 'all' && (
-                                            <div className="flex items-center gap-2 mb-4">
-                                                <Layers className="w-5 h-5 text-red-500" />
-                                                <h3 className="text-lg font-bold text-white">Series</h3>
-                                                {!seriesLoading && <span className="text-slate-500 text-sm">({seriesList.length})</span>}
-                                            </div>
-                                        )}
-                                        {seriesLoading ? <LoadingSpinner /> : (
-                                            <>
-                                                <ContentGrid>
-                                                    {seriesList.map(series => (
-                                                        <SeriesCard
-                                                            key={series._id}
-                                                            series={series}
-                                                            onToggleFavorite={() => handleToggleFavoriteSeries(series._id)}
-                                                            {...cardProps}
+                                {!seriesLoading && !videosLoading && seriesList.length === 0 && videos.length === 0 ? (
+                                    <EmptyState hasFilters={hasFilters} navigate={navigate} />
+                                ) : (
+                                    <>
+                                        {/* Series section */}
+                                        {showSeries && (
+                                            <section className="mb-8">
+                                                {displayMode === 'all' && (
+                                                    <div className="flex items-center gap-2 mb-4">
+                                                        <Layers className="w-5 h-5 text-red-500" />
+                                                        <h3 className="text-lg font-bold text-white">Series</h3>
+                                                        {!seriesLoading && <span className="text-slate-500 text-sm">({seriesList.length})</span>}
+                                                    </div>
+                                                )}
+                                                {seriesLoading ? <LoadingSpinner /> : (
+                                                    <>
+                                                        <ContentGrid>
+                                                            {seriesList.map(series => (
+                                                                <SeriesCard
+                                                                    key={series._id}
+                                                                    series={series}
+                                                                    onToggleFavorite={() => handleToggleFavoriteSeries(series._id)}
+                                                                    {...cardProps}
+                                                                />
+                                                            ))}
+                                                        </ContentGrid>
+                                                        {/* Fix 3: Pagination per section */}
+                                                        <Pagination
+                                                            currentPage={seriesPage}
+                                                            totalPages={seriesTotalPages}
+                                                            onPageChange={p => {
+                                                                updateParams({ seriesPage: String(p) });
+                                                                window.scrollTo({ top: 0, behavior: 'smooth' });
+                                                            }}
                                                         />
-                                                    ))}
-                                                </ContentGrid>
-                                                {/* Fix 3: Pagination per section */}
-                                                <Pagination
-                                                    currentPage={seriesPage}
-                                                    totalPages={seriesTotalPages}
-                                                    onPageChange={p => {
-                                                        updateParams({ seriesPage: String(p) });
-                                                        window.scrollTo({ top: 0, behavior: 'smooth' });
-                                                    }}
-                                                />
-                                            </>
+                                                    </>
+                                                )}
+                                            </section>
                                         )}
-                                    </section>
-                                )}
 
-                                {showSeries && showVideos && !seriesLoading && !videosLoading && seriesList.length > 0 && videos.length > 0 && (
-                                    <div className="border-t border-slate-800 mb-8" />
-                                )}
+                                        {showSeries && showVideos && !seriesLoading && !videosLoading && seriesList.length > 0 && videos.length > 0 && (
+                                            <div className="border-t border-slate-800 mb-8" />
+                                        )}
 
-                                {/* Videos section */}
-                                {showVideos && (
-                                    <section>
-                                        {displayMode === 'all' && !videosLoading && videos.length > 0 && (
-                                            <div className="flex items-center gap-2 mb-4">
-                                                <Film className="w-5 h-5 text-red-500" />
-                                                <h3 className="text-lg font-bold text-white">Videos</h3>
-                                                <span className="text-slate-500 text-sm">({videos.length})</span>
-                                            </div>
-                                        )}
-                                        {displayMode === 'videos' && !videosLoading && (
-                                            <div className="flex items-center gap-2 mb-4">
-                                                <Film className="w-5 h-5 text-red-500" />
-                                                <h3 className="text-lg font-bold text-white">All Videos</h3>
-                                                <span className="text-slate-400 text-xs ml-1">(including series episodes)</span>
-                                                <span className="text-slate-500 text-sm">({videos.length})</span>
-                                            </div>
-                                        )}
-                                        {videosLoading ? <LoadingSpinner /> : (
-                                            <>
-                                                <ContentGrid>
-                                                    {videos.map(video => (
-                                                        <VideoCard
-                                                            key={video._id}
-                                                            video={video}
-                                                            onToggleFavorite={() => handleToggleFavoriteVideo(video._id)}
-                                                            {...cardProps}
+                                        {/* Videos section */}
+                                        {showVideos && (
+                                            <section>
+                                                {displayMode === 'all' && !videosLoading && videos.length > 0 && (
+                                                    <div className="flex items-center gap-2 mb-4">
+                                                        <Film className="w-5 h-5 text-red-500" />
+                                                        <h3 className="text-lg font-bold text-white">Videos</h3>
+                                                        <span className="text-slate-500 text-sm">({videos.length})</span>
+                                                    </div>
+                                                )}
+                                                {displayMode === 'videos' && !videosLoading && (
+                                                    <div className="flex items-center gap-2 mb-4">
+                                                        <Film className="w-5 h-5 text-red-500" />
+                                                        <h3 className="text-lg font-bold text-white">All Videos</h3>
+                                                        <span className="text-slate-400 text-xs ml-1">(including series episodes)</span>
+                                                        <span className="text-slate-500 text-sm">({videos.length})</span>
+                                                    </div>
+                                                )}
+                                                {videosLoading ? <LoadingSpinner /> : (
+                                                    <>
+                                                        <ContentGrid>
+                                                            {videos.map(video => (
+                                                                <VideoCard
+                                                                    key={video._id}
+                                                                    video={video}
+                                                                    onToggleFavorite={() => handleToggleFavoriteVideo(video._id)}
+                                                                    {...cardProps}
+                                                                />
+                                                            ))}
+                                                        </ContentGrid>
+                                                        {/* Fix 3: Pagination per section */}
+                                                        <Pagination
+                                                            currentPage={videosPage}
+                                                            totalPages={videosTotalPages}
+                                                            onPageChange={p => {
+                                                                updateParams({ videosPage: String(p) });
+                                                                window.scrollTo({ top: 0, behavior: 'smooth' });
+                                                            }}
                                                         />
-                                                    ))}
-                                                </ContentGrid>
-                                                {/* Fix 3: Pagination per section */}
-                                                <Pagination
-                                                    currentPage={videosPage}
-                                                    totalPages={videosTotalPages}
-                                                    onPageChange={p => {
-                                                        updateParams({ videosPage: String(p) });
-                                                        window.scrollTo({ top: 0, behavior: 'smooth' });
-                                                    }}
-                                                />
-                                            </>
+                                                    </>
+                                                )}
+                                            </section>
                                         )}
-                                    </section>
+                                    </>
                                 )}
                             </>
                         )}

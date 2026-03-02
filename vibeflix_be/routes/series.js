@@ -71,28 +71,72 @@ router.get("/", async (req, res) => {
         const { page = 1, limit = 50, sortBy = 'updatedAt', order = 'desc' } = req.query;
         const query = buildFilterQuery(req.query);
         const sortOrder = order === 'asc' ? 1 : -1;
+        const skip = (parseInt(page) - 1) * parseInt(limit);
+        const lim  = parseInt(limit);
 
-        const [series, count] = await Promise.all([
-            Series.find(query)
-                .sort({ [sortBy]: sortOrder })
-                .limit(parseInt(limit))
-                .skip((parseInt(page) - 1) * parseInt(limit)),
-            Series.countDocuments(query)
-        ]);
+        // ── Aggregation pipeline ──────────────────────────────────────────────
+        // Always join Video so we can compute episodeCount, seasonCount, and
+        // totalViews in a single DB round-trip. Sorting by `views` then works
+        // because `totalViews` is a first-class field in the pipeline output.
+        const pipeline = [
+            { $match: query },
 
-        const seriesWithCounts = await Promise.all(
-            series.map(async (s) => {
-                const episodeCount = await Video.countDocuments({ seriesId: s._id });
-                const seasons = await Video.distinct('seasonNumber', { seriesId: s._id });
-                return { ...s.toObject(), episodeCount, seasonCount: seasons.filter(Boolean).length || 1 };
-            })
-        );
+            // Join all episodes for this series
+            {
+                $lookup: {
+                    from:         'videos',
+                    localField:   '_id',
+                    foreignField: 'seriesId',
+                    as:           'episodes'
+                }
+            },
+
+            // Compute derived fields
+            {
+                $addFields: {
+                    episodeCount: { $size: '$episodes' },
+                    totalViews:   { $sum: '$episodes.views' },
+                    seasonCount: {
+                        $max: [
+                            1,
+                            {
+                                $size: {
+                                    $filter: {
+                                        input: { $setUnion: '$episodes.seasonNumber' },
+                                        as:    's',
+                                        cond:  { $gt: ['$$s', null] }
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                }
+            },
+
+            // Drop the raw episodes array — we only needed it for aggregation
+            { $project: { episodes: 0 } },
+
+            // Sort — map the public param `views` → internal field `totalViews`
+            { $sort: { [sortBy === 'views' ? 'totalViews' : sortBy]: sortOrder } },
+
+            // Pagination via a $facet so we get total count in one query
+            {
+                $facet: {
+                    data:  [{ $skip: skip }, { $limit: lim }],
+                    count: [{ $count: 'total' }]
+                }
+            }
+        ];
+
+        const [result] = await Series.aggregate(pipeline);
+        const series = result?.data  ?? [];
+        const total  = result?.count?.[0]?.total ?? 0;
 
         res.json({
-            series: seriesWithCounts,
-            totalPages:  Math.ceil(count / parseInt(limit)),
+            series,
+            totalPages:  Math.ceil(total / lim),
             currentPage: parseInt(page),
-            total:       count
+            total
         });
     } catch (error) {
         console.error('Error fetching series:', error);
