@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { KeyRound, Eye, EyeOff, AlertCircle, CheckCircle2, Check, X } from 'lucide-react';
-import { authAPI } from '../api/api';
-import { useAuth } from '../context/AuthContext';
+import { authAPI } from '../../api/api';
+import { useAuth } from '../../context/AuthContext';
 
 const rules = [
     { label: 'At least 8 characters',       test: (p) => p.length >= 8 },

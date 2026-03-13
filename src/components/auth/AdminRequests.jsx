@@ -4,7 +4,7 @@ import {
     RefreshCw, ChevronDown, ChevronUp, AlertCircle,
     UserCheck, UserX, Shield, ShieldOff,
 } from 'lucide-react';
-import { authAPI } from '../api/api';
+import { authAPI } from '../../api/api';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

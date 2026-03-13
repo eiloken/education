@@ -3,8 +3,8 @@ import {
     X, Heart, Film, Layers, LogOut, Shield, User as UserIcon,
     ChevronLeft, ChevronRight, RefreshCw, Crown, Users,
 } from 'lucide-react';
-import { useAuth } from '../context/AuthContext';
-import { favoritesAPI, authAPI, generalAPI } from '../api/api';
+import { useAuth } from '../../context/AuthContext';
+import { favoritesAPI, authAPI, generalAPI } from '../../api/api';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 

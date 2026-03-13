@@ -26,6 +26,31 @@ const uploadThumb = multer({
     },
 });
 
+// ─── Smart multi-field search — same logic as videos.js ──────────────────────
+function applySmartSearch(query, search) {
+    if (!search?.trim()) return;
+    const terms = search.trim().split(/\s+/).filter(Boolean);
+    const termClauses = terms.map(term => {
+        const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const r = new RegExp(escaped, 'i');
+        return {
+            $or: [
+                { title:       r },
+                { description: r },
+                { tags:        r },
+                { studios:     r },
+                { actors:      r },
+                { characters:  r },
+            ],
+        };
+    });
+    if (termClauses.length === 1) {
+        query.$or = termClauses[0].$or;
+    } else {
+        query.$and = (query.$and || []).concat(termClauses);
+    }
+}
+
 // ─── Build MongoDB query from filter params ───────────────────────────────────
 function buildFilterQuery(params, userFavIds = null) {
     const {
@@ -50,8 +75,8 @@ function buildFilterQuery(params, userFavIds = null) {
     applyField('characters', characters, charactersExclude);
 
     if (year)     query.year      = parseInt(year);
-    if (search)   query.$text     = { $search: search };
     if (dateFrom) query.updatedAt = { $gte: new Date(dateFrom) };
+    if (search)   applySmartSearch(query, search);
 
     if (favorite === 'true') {
         query._id = { $in: userFavIds ?? [] };
@@ -225,7 +250,6 @@ router.delete("/:id", requireAdmin, async (req, res) => {
         const series = await Series.findById(req.params.id);
         if (!series) return res.status(404).json({ error: 'Series not found' });
 
-        // Get episode IDs to clean up their favorites
         const episodes = await Video.find({ seriesId: series._id }, '_id');
         const episodeIds = episodes.map(e => e._id);
 

@@ -1,12 +1,12 @@
 import React, { useState } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import Home from "./components/Home";
-import UploadVideo from "./components/UploadVideo";
-import VideoDetail, { SeriesDetail } from "./components/VideoDetail";
-import CreateSeries from "./components/CreateSeries";
-import Login from "./components/Login";
-import Register from "./components/Register";
-import ChangePassword from "./components/ChangePassword";
+import UploadVideo from "./components/videos/UploadVideo";
+import VideoDetail, { SeriesDetail } from "./components/videos/VideoDetail";
+import CreateSeries from "./components/series/CreateSeries";
+import Login from "./components/auth/Login";
+import Register from "./components/auth/Register";
+import ChangePassword from "./components/auth/ChangePassword";
 import { Toaster } from "react-hot-toast";
 import { useAuth } from "./context/AuthContext";
 

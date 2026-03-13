@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { Play, Pause, Volume2, VolumeX, Maximize, Minimize, Settings, SkipBack, SkipForward, RefreshCcw, RotateCcw, Volume1, RefreshCw } from 'lucide-react';
-import useMyStorage from '../utils/localStorage';
+import useMyStorage from '../../utils/localStorage';
 
 // ─── Component ────────────────────────────────────────────────────────────────
 function VideoPlayer({

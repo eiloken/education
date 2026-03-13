@@ -1,21 +1,20 @@
-import React, { forwardRef, Fragment, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import React, { forwardRef, Fragment, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { seriesAPI, videoAPI, activityAPI } from "../api/api";
 import toast from "react-hot-toast";
 import {
     ChevronLeft, ChevronRight, ChevronUp,
-    Film, Filter, Layers, List, Plus, Search,
+    Film, Filter, Layers, Plus, Search,
     ArrowLeft, TrendingUp, Clock, Flame,
-    Heart, LayoutDashboard, User as UserIcon, Crown, Users,
+    Heart, LayoutDashboard, User as UserIcon, Crown, Users, X,
 } from "lucide-react";
-import VideoCard from "./VideoCard";
-import SeriesCard from "./SeriesCard";
-import FilterSidebar, { DEFAULT_FILTERS, cycleItem } from "./FilterSidebar";
+import VideoCard from "./videos/VideoCard.jsx";
+import SeriesCard from "./series/SeriesCard.jsx";
+import FilterSidebar, { DEFAULT_FILTERS, cycleItem, filtersToParams, paramsToFilters } from "./FilterSidebar";
 import Pagination from "./Pagination";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import useMyStorage from "../utils/localStorage";
 import Dashboard from "./Dashboard";
-import AdminRequests from "./AdminRequests";
-import UserProfile from "./UserProfile";
+import AdminRequests from "./auth/AdminRequests.jsx";
+import UserProfile from "./auth/UserProfile.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
 
 // ─── Util ─────────────────────────────────────────────────────────────────────
@@ -28,11 +27,10 @@ const SECTIONS = [
 ];
 
 const DISPLAY_MODES = [
-    { value: 'all',       label: 'All',       icon: List,          adminOnly: false },
-    { value: 'series',    label: 'Series',    icon: Layers,        adminOnly: false },
-    { value: 'videos',    label: 'Videos',    icon: Film,          adminOnly: false },
-    { value: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, adminOnly: true },
-    { value: 'requests',  label: 'Requests',  icon: Users,         adminOnly: true  },
+    { value: 'series',    label: 'Series',    icon: Layers,          adminOnly: false },
+    { value: 'videos',    label: 'Videos',    icon: Film,            adminOnly: false },
+    { value: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, adminOnly: true  },
+    { value: 'requests',  label: 'Requests',  icon: Users,           adminOnly: true  },
 ];
 
 // ─── Activity ping — debounced, every ~2 min on user interaction ──────────────
@@ -86,7 +84,7 @@ function HomeSection({ section, items, cardProps, handleShowAll, handleToggleFav
             </div>
             <HScrollRow ref={rowRef} itemCount={items.length} onArrowChange={({ canLeft, canRight }) => { setCanLeft(canLeft); setCanRight(canRight); }}>
                 {items.map(item => (
-                    <div key={item._id} className="shrink-0 w-44 sm:w-52 snap-start [&>a]:border-x-0 [&>a]:rounded-none">
+                    <div key={item._id} className="shrink-0 w-44 sm:w-52 self-stretch snap-start">
                         {item._type === 'series' ? (
                             <SeriesCard series={item} onToggleFavorite={() => handleToggleFavoriteSeries(item._id)} {...cardProps} />
                         ) : (
@@ -120,7 +118,7 @@ const HScrollRow = forwardRef(({ children, itemCount, onArrowChange }, ref) => {
     useImperativeHandle(ref, () => ({ scrollLeft: () => scroll(-1), scrollRight: () => scroll(1) }));
     return (
         <div className="relative">
-            <div ref={rowRef} className="flex gap-3 overflow-x-auto pb-1 snap-x snap-mandatory scroll-smooth -mx-3 px-3 sm:-mx-4 sm:px-4"
+            <div ref={rowRef} className="flex items-stretch gap-3 overflow-x-auto pb-1 snap-x snap-mandatory scroll-smooth -mx-3 px-3 sm:-mx-4 sm:px-4"
                 style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
                 {children}
             </div>
@@ -128,15 +126,57 @@ const HScrollRow = forwardRef(({ children, itemCount, onArrowChange }, ref) => {
     );
 });
 
-const SearchBox = forwardRef(({ searchTerm, setSearchTerm, onBlur }, ref) => {
+// ─── SearchBox — triggers search on Enter, not on every keystroke ─────────────
+const SearchBox = forwardRef(({ searchTerm, setSearchTerm, onCommit, onBlur }, ref) => {
     const searchBoxRef = useRef(null);
     useImperativeHandle(ref, () => searchBoxRef.current);
+
+    const handleKeyDown = (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            onCommit?.(searchTerm);
+            searchBoxRef.current?.blur();
+        }
+        if (e.key === 'Escape') {
+            setSearchTerm('');
+            onCommit?.('');
+            searchBoxRef.current?.blur();
+        }
+    };
+
+    const handleClear = () => {
+        setSearchTerm('');
+        onCommit?.('');
+        searchBoxRef.current?.focus();
+    };
+
     return (
-        <div className="relative text-sm p-0.5">
-            <Search className="w-3.5 h-3.5 absolute top-1/2 left-2 -translate-y-1/2 text-slate-400" />
-            <input ref={searchBoxRef} type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
-                onBlur={onBlur} placeholder="Quick search…"
-                className="px-8 py-2.5 bg-slate-800 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 w-full sm:w-auto" />
+        <div className="relative text-sm p-0.5 group">
+            <Search className="w-3.5 h-3.5 absolute top-1/2 left-2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+            <input
+                ref={searchBoxRef}
+                type="text"
+                value={searchTerm}
+                onChange={e => setSearchTerm(e.target.value)}
+                onKeyDown={handleKeyDown}
+                onBlur={onBlur}
+                placeholder="Search title, actor, tag…"
+                className="pl-7 pr-16 py-2.5 bg-slate-800 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 w-full sm:w-64 transition-all"
+            />
+            <div className="absolute top-1/2 right-2 -translate-y-1/2 flex items-center gap-1">
+                {searchTerm && (
+                    <button
+                        onMouseDown={e => { e.preventDefault(); handleClear(); }}
+                        className="text-slate-500 hover:text-slate-300 transition p-0.5"
+                        tabIndex={-1}
+                    >
+                        <X className="w-3 h-3" />
+                    </button>
+                )}
+                <kbd className="hidden sm:inline-flex items-center px-1.5 py-0.5 text-[10px] font-mono text-slate-500 bg-slate-700 rounded border border-slate-600">
+                    ↵
+                </kbd>
+            </div>
         </div>
     );
 });
@@ -162,23 +202,47 @@ function Home() {
     const { user, loading: authLoading, isAdmin } = useAuth();
     useActivityPing();
 
-    const [displayMode, setDisplayMode] = useMyStorage("vibeflix_display", "all");
     const [showProfile, setShowProfile] = useState(false);
 
     const [sectionsData,    setSectionsData]    = useState({});
     const [sectionsLoading, setSectionsLoading] = useState(true);
 
     const [searchParams, setSearchParams] = useSearchParams();
+
+    // ── All persistent state lives in the URL ─────────────────────────────────
     const homeMode        = searchParams.get('mode') || 'home';
     const detailSectionId = searchParams.get('section');
     const detailSection   = SECTIONS.find(s => s.id === detailSectionId) || null;
     const seriesPage      = parseInt(searchParams.get('seriesPage') || '1', 10);
     const videosPage      = parseInt(searchParams.get('videosPage') || '1', 10);
 
+    // displayMode from URL param 'view' (default: 'series')
+    const displayModeParam = searchParams.get('view');
+    const displayMode = (DISPLAY_MODES.some(m => m.value === displayModeParam)) ? displayModeParam : 'series';
+
+    // filters derived from URL — memoized on the raw query string so the object
+    // reference is stable between renders when nothing actually changed.
+    const filtersKey = searchParams.toString();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const filters = useMemo(() => paramsToFilters(searchParams), [filtersKey]);
+
+    // ── URL mutation helpers ───────────────────────────────────────────────────
     const updateParams = useCallback((updates) => {
         setSearchParams(prev => {
             const next = new URLSearchParams(prev);
             Object.entries(updates).forEach(([k, v]) => v == null ? next.delete(k) : next.set(k, String(v)));
+            return next;
+        }, { replace: false });
+    }, [setSearchParams]);
+
+    const setDisplayMode = useCallback((value) => {
+        setSearchParams(prev => {
+            const next = new URLSearchParams(prev);
+            if (value && value !== 'series') next.set('view', value); else next.delete('view');
+            next.set('mode', 'home');
+            next.delete('section');
+            next.set('seriesPage', '1');
+            next.set('videosPage', '1');
             return next;
         }, { replace: false });
     }, [setSearchParams]);
@@ -190,9 +254,10 @@ function Home() {
     const [seriesTotalPages,setSeriesTotalPages] = useState(1);
     const [videosTotalPages,setVideosTotalPages] = useState(1);
 
-    const [filters,         setFilters]         = useState(DEFAULT_FILTERS);
     const [showFilters,     setShowFilters]      = useState(false);
-    const [searchTerm,      setSearchTerm]       = useState('');
+    // Local search term — only committed to URL on Enter; initialized from URL
+    // but NOT synced back automatically (prevents refresh resetting mode=detail)
+    const [searchTerm,      setSearchTerm]       = useState(filters.search || '');
     const [showQuickSearch, setShowQuickSearch]  = useState(false);
     const quickSearchRef = useRef(null);
     const [showScrollTop,   setShowScrollTop]    = useState(false);
@@ -232,7 +297,7 @@ function Home() {
                     const p = s.getParams();
                     const [sd, vd] = await Promise.all([
                         displayMode !== 'videos' ? seriesAPI.getSeries({ ...p, limit: 20 }) : Promise.resolve({ series: [] }),
-                        displayMode !== 'series' ? videoAPI.getVideos({ ...p, limit: 20, exceptSeries: displayMode === 'all' ? 'true' : 'false' }) : Promise.resolve({ videos: [] }),
+                        displayMode !== 'series' ? videoAPI.getVideos({ ...p, limit: 20 }) : Promise.resolve({ videos: [] }),
                     ]);
                     return { id: s.id, videos: vd.videos || [], series: sd.series || [] };
                 })
@@ -269,7 +334,7 @@ function Home() {
             const base = homeMode === 'detail' && detailSection
                 ? { ...detailSection.getParams(), page: videosPage, limit: 20 }
                 : buildApiParams({ page: videosPage });
-            const data = await videoAPI.getVideos({ ...base, exceptSeries: displayMode === 'all' ? 'true' : undefined });
+            const data = await videoAPI.getVideos(base);
             setVideos(data.videos || []);
             setVideosTotalPages(data.totalPages || 1);
         } catch (err) { toast.error('Failed to load videos'); }
@@ -280,26 +345,35 @@ function Home() {
     useEffect(() => { if (homeMode !== 'home') fetchSeriesContent(); }, [homeMode, fetchSeriesContent]);
     useEffect(() => { if (homeMode !== 'home') fetchVideosContent(); }, [homeMode, fetchVideosContent]);
 
+    // Sync searchTerm from URL only when the URL's search param changes externally
+    // (e.g. user clears a filter pill). Does NOT write back to URL — that only
+    // happens on Enter via commitSearch below.
     useEffect(() => {
-        const t = setTimeout(() => {
-            const nf = { ...filters, search: searchTerm };
-            setFilters(nf);
-            const nextMode = hasActiveFilters(nf) ? 'filtered' : 'home';
-            setSearchParams(prev => {
-                const next = new URLSearchParams(prev);
-                next.set('mode', nextMode); next.set('seriesPage', '1'); next.set('videosPage', '1');
-                if (nextMode !== 'detail') next.delete('section');
-                return next;
-            }, { replace: true });
-        }, 500);
-        return () => clearTimeout(t);
-    }, [searchTerm]); // eslint-disable-line react-hooks/exhaustive-deps
+        setSearchTerm(filters.search || '');
+    }, [filters.search]);
 
     useEffect(() => {
         const handler = () => setShowScrollTop(window.scrollY > 300);
         window.addEventListener('scroll', handler, { passive: true });
         return () => window.removeEventListener('scroll', handler);
     }, []);
+
+    // ── Commit search to URL (called on Enter) ────────────────────────────────
+    const commitSearch = useCallback((term) => {
+        const nf = { ...filters, search: term };
+        const fp = filtersToParams(nf);
+        setSearchParams(prev => {
+            const next = new URLSearchParams(prev);
+            ['q','tags','txc','stu','sxc','act','axc','chr','cxc','yr','fav','fm','sort','ord'].forEach(k => next.delete(k));
+            Object.entries(fp).forEach(([k, v]) => { if (v != null) next.set(k, v); });
+            const nextMode = hasActiveFilters(nf) ? 'filtered' : 'home';
+            next.set('mode', nextMode);
+            next.set('seriesPage', '1');
+            next.set('videosPage', '1');
+            if (nextMode !== 'detail') next.delete('section');
+            return next;
+        }, { replace: false });
+    }, [filters, setSearchParams, hasActiveFilters]);
 
     // ── Toggle favorites — uses returned isFavorite from server ───────────────
     const applyFavToggle = (id, isFavorite, listSetter, sectionKey) => {
@@ -336,33 +410,42 @@ function Home() {
     };
 
     const handleFilterChange = (newFilters) => {
-        setFilters(newFilters);
-        updateParams({ mode: hasActiveFilters(newFilters) ? 'filtered' : 'home', section: null, seriesPage: '1', videosPage: '1' });
+        const fp = filtersToParams(newFilters);
+        setSearchParams(prev => {
+            const next = new URLSearchParams(prev);
+            ['q','tags','txc','stu','sxc','act','axc','chr','cxc','yr','fav','fm','sort','ord'].forEach(k => next.delete(k));
+            Object.entries(fp).forEach(([k, v]) => { if (v != null) next.set(k, v); });
+            next.set('mode', hasActiveFilters(newFilters) ? 'filtered' : 'home');
+            next.delete('section');
+            next.set('seriesPage', '1');
+            next.set('videosPage', '1');
+            return next;
+        }, { replace: false });
+        setSearchTerm(newFilters.search || '');
     };
 
     const handleChipClick = (field, value) => {
         const nf = cycleItem(filters, field, value);
-        setFilters(nf);
-        updateParams({ mode: hasActiveFilters(nf) ? 'filtered' : 'home', section: null, seriesPage: '1', videosPage: '1' });
+        handleFilterChange(nf);
     };
 
     const handleRemoveFilter = (field, value) => {
-        setFilters(prev => {
-            const updated = {
-                ...prev,
-                [field]: (prev[field] || []).filter?.(x => x !== value) ?? prev[field],
-                [`${field}Exclude`]: (prev[`${field}Exclude`] || []).filter?.(x => x !== value),
-            };
-            if (field === 'year')     { updated.year     = ''; }
-            if (field === 'favorite') { updated.favorite = false; }
-            if (field === 'search')   { updated.search   = ''; setSearchTerm(''); }
-            updateParams({ mode: hasActiveFilters(updated) ? 'filtered' : 'home', section: null, seriesPage: '1', videosPage: '1' });
-            return updated;
-        });
+        const updated = {
+            ...filters,
+            [field]: (filters[field] || []).filter?.((x) => x !== value) ?? filters[field],
+            [`${field}Exclude`]: (filters[`${field}Exclude`] || []).filter?.((x) => x !== value),
+        };
+        if (field === 'year')     { updated.year     = ''; }
+        if (field === 'favorite') { updated.favorite = false; }
+        if (field === 'search')   { updated.search   = ''; setSearchTerm(''); }
+        handleFilterChange(updated);
     };
 
     const handleShowAll    = (section) => { updateParams({ mode: 'detail', section: section.id, seriesPage: '1', videosPage: '1' }); window.scrollTo({ top: 0, behavior: 'smooth' }); };
-    const handleBackToHome = () => updateParams({ mode: hasActiveFilters(filters) ? 'filtered' : 'home', section: null, seriesPage: '1', videosPage: '1' });
+    const handleBackToHome = () => {
+        const nextMode = hasActiveFilters(filters) ? 'filtered' : 'home';
+        updateParams({ mode: nextMode, section: null, seriesPage: '1', videosPage: '1' });
+    };
 
     const filterCount = (filters.tags?.length || 0) + (filters.tagsExclude?.length || 0) +
         (filters.studios?.length || 0) + (filters.studiosExclude?.length || 0) +
@@ -371,6 +454,8 @@ function Home() {
         (filters.year ? 1 : 0) + (filters.favorite ? 1 : 0);
 
     const hasFilters = filterCount > 0 || !!filters.search;
+    // Typed but not yet committed to URL
+    const hasPendingSearch = searchTerm !== (filters.search || '');
     const showSeries = displayMode !== 'videos';
     const showVideos = displayMode !== 'series';
 
@@ -397,7 +482,15 @@ function Home() {
                     <div className="flex items-center justify-between gap-2">
                         <h1
                             className="text-2xl sm:text-3xl font-bold text-red-500 cursor-pointer hover:text-red-400 transition shrink-0"
-                            onClick={() => { updateParams({ mode: 'home', section: null, seriesPage: '1', videosPage: '1' }); setFilters(DEFAULT_FILTERS); setSearchTerm(''); }}
+                            onClick={() => {
+                                setSearchTerm('');
+                                setSearchParams(prev => {
+                                    const next = new URLSearchParams(prev);
+                                    ['q','tags','txc','stu','sxc','act','axc','chr','cxc','yr','fav','fm','sort','ord',
+                                     'mode','section','seriesPage','videosPage'].forEach(k => next.delete(k));
+                                    return next;
+                                }, { replace: false });
+                            }}
                         >
                             VIBEFLIX
                         </h1>
@@ -406,7 +499,11 @@ function Home() {
                             {displayMode !== 'dashboard' && displayMode !== 'requests' && (
                                 <>
                                     <div className="hidden sm:block">
-                                        <SearchBox searchTerm={searchTerm} setSearchTerm={setSearchTerm} />
+                                        <SearchBox
+                                            searchTerm={searchTerm}
+                                            setSearchTerm={setSearchTerm}
+                                            onCommit={commitSearch}
+                                        />
                                     </div>
                                     <button
                                         onClick={() => setShowFilters(true)}
@@ -434,22 +531,36 @@ function Home() {
                     {displayMode !== 'dashboard' && (
                         showQuickSearch ? (
                             <div className="mt-2">
-                                <SearchBox ref={quickSearchRef} searchTerm={searchTerm} setSearchTerm={setSearchTerm} onBlur={() => setShowQuickSearch(false)} />
+                                <SearchBox
+                                    ref={quickSearchRef}
+                                    searchTerm={searchTerm}
+                                    setSearchTerm={setSearchTerm}
+                                    onCommit={(term) => { commitSearch(term); setShowQuickSearch(false); }}
+                                    onBlur={() => setShowQuickSearch(false)}
+                                />
                             </div>
                         ) : (
-                            hasFilters && (
-                                <div className="flex flex-wrap gap-1 mt-1 max-h-20 overflow-y-auto">
-                                    {filters.search   && <FilterPill label={`"${filters.search}"`}    onRemove={() => handleRemoveFilter('search')}   color="slate" />}
-                                    {filters.favorite && <FilterPill label="❤ Favorites"              onRemove={() => handleRemoveFilter('favorite')} color="red"   />}
-                                    {filters.year     && <FilterPill label={`Year: ${filters.year}`}  onRemove={() => handleRemoveFilter('year')}     color="green" />}
-                                    {['studios','actors','characters','tags'].map(field => (
-                                        <Fragment key={field}>
-                                            {(filters[field] || []).map(v => <FilterPill key={`inc-${v}`} label={`✓ ${v}`} onRemove={() => handleRemoveFilter(field, v)} color="green" />)}
-                                            {(filters[`${field}Exclude`] || []).map(v => <FilterPill key={`exc-${v}`} label={`✗ ${v}`} onRemove={() => handleRemoveFilter(`${field}Exclude`, v)} color="red" />)}
-                                        </Fragment>
-                                    ))}
-                                </div>
-                            )
+                            <>
+                                {/* Pending search hint */}
+                                {hasPendingSearch && searchTerm && (
+                                    <div className="mt-1 text-xs text-slate-500 hidden sm:block">
+                                        Press <kbd className="px-1 py-0.5 bg-slate-800 rounded border border-slate-700 font-mono">↵</kbd> to search for <span className="text-slate-300">"{searchTerm}"</span>
+                                    </div>
+                                )}
+                                {hasFilters && (
+                                    <div className="flex flex-wrap gap-1 mt-1 max-h-20 overflow-y-auto">
+                                        {filters.search   && <FilterPill label={`"${filters.search}"`}    onRemove={() => handleRemoveFilter('search')}   color="slate" />}
+                                        {filters.favorite && <FilterPill label="❤ Favorites"              onRemove={() => handleRemoveFilter('favorite')} color="red"   />}
+                                        {filters.year     && <FilterPill label={`Year: ${filters.year}`}  onRemove={() => handleRemoveFilter('year')}     color="green" />}
+                                        {['studios','actors','characters','tags'].map(field => (
+                                            <Fragment key={field}>
+                                                {(filters[field] || []).map(v => <FilterPill key={`inc-${v}`} label={`✓ ${v}`} onRemove={() => handleRemoveFilter(field, v)} color="green" />)}
+                                                {(filters[`${field}Exclude`] || []).map(v => <FilterPill key={`exc-${v}`} label={`✗ ${v}`} onRemove={() => handleRemoveFilter(`${field}Exclude`, v)} color="red" />)}
+                                            </Fragment>
+                                        ))}
+                                    </div>
+                                )}
+                            </>
                         )
                     )}
                 </div>
@@ -465,33 +576,35 @@ function Home() {
                             .map(({ value, label, icon: Icon }) => (
                                 <button
                                     key={value}
-                                    onClick={() => setDisplayMode(value)}
+                                    onClick={() => {
+                                        updateParams({ view: value !== 'series' ? value : null, mode: 'home', section: null, seriesPage: '1', videosPage: '1' });
+                                    }}
                                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition ${
                                         displayMode === value ? 'bg-red-500 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800'
                                     }`}
                                 >
-                                    {Icon && <Icon className="w-3.5 h-3.5" />}
-                                    <span className="hidden sm:block">{label}</span>
+                                    {Icon && <Icon className="w-4 h-4" />}
+                                    <span className="hidden md:block text-sm">{label}</span>
                                 </button>
                             ))}
                     </div>
 
                     {/* Admin-only upload buttons */}
                     {displayMode !== 'dashboard' && displayMode !== 'requests' && isAdmin && (
-                        <div className="flex items-center gap-1.5 sm:gap-2">
+                        <div className="flex items-center gap-1.5 p-1 rounded-lg bg-slate-900">
                             <button
                                 onClick={() => navigate('/series/create')}
-                                className="flex items-center gap-1.5 px-2 py-2 sm:px-3 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition"
+                                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition"
                             >
-                                <Layers className="w-4 h-4 sm:w-5 sm:h-5" />
-                                <span className="hidden sm:inline text-sm">New Series</span>
+                                <Layers className="w-4 h-4" />
+                                <span className="hidden md:inline text-sm whitespace-nowrap">New Series</span>
                             </button>
                             <button
                                 onClick={() => navigate('/upload')}
-                                className="flex items-center gap-1.5 px-2 py-2 sm:px-3 bg-red-500 hover:bg-red-600 text-white rounded-lg transition"
+                                className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500 hover:bg-red-600 text-white rounded-lg transition"
                             >
-                                <Plus className="w-4 h-4 sm:w-5 sm:h-5" />
-                                <span className="hidden sm:inline text-sm">Upload</span>
+                                <Plus className="w-4 h-4" />
+                                <span className="hidden md:inline text-sm">Upload</span>
                             </button>
                         </div>
                     )}
@@ -549,7 +662,7 @@ function Home() {
                                     <>
                                         {showSeries && (
                                             <section className="mb-8">
-                                                {displayMode === 'all' && (
+                                                {displayMode === 'videos' && (
                                                     <div className="flex items-center gap-2 mb-4">
                                                         <Layers className="w-5 h-5 text-red-500" />
                                                         <h3 className="text-lg font-bold text-white">Series</h3>
@@ -570,19 +683,8 @@ function Home() {
                                             </section>
                                         )}
 
-                                        {showSeries && showVideos && !seriesLoading && !videosLoading && seriesList.length > 0 && videos.length > 0 && (
-                                            <div className="border-t border-slate-800 mb-8" />
-                                        )}
-
                                         {showVideos && (
                                             <section>
-                                                {displayMode === 'all' && !videosLoading && videos.length > 0 && (
-                                                    <div className="flex items-center gap-2 mb-4">
-                                                        <Film className="w-5 h-5 text-red-500" />
-                                                        <h3 className="text-lg font-bold text-white">Videos</h3>
-                                                        <span className="text-slate-500 text-sm">({videos.length})</span>
-                                                    </div>
-                                                )}
                                                 {videosLoading ? <LoadingSpinner /> : (
                                                     <>
                                                         <ContentGrid>
@@ -625,7 +727,11 @@ function buildMixedItems({ videos = [], series = [] }, displayMode) {
     return [...s, ...v].slice(0, 20);
 }
 function ContentGrid({ children }) {
-    return <div className="grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">{children}</div>;
+    return (
+        <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4 items-stretch">
+            {children}
+        </div>
+    );
 }
 function LoadingSpinner() {
     return (

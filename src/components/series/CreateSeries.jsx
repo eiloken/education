@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { seriesAPI, videoAPI } from "../api/api";
+import { seriesAPI, videoAPI } from "../../api/api";
 import toast from "react-hot-toast";
 import { ArrowLeft, Image, Layers, Loader, Plus, Save, Trash2, X } from "lucide-react";
 

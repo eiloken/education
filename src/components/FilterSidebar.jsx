@@ -15,6 +15,52 @@ export const DEFAULT_FILTERS = {
     order: 'desc'
 };
 
+// ─── URL serialisation helpers ────────────────────────────────────────────────
+// These keep the query-string compact so it never gets unwieldy.
+// Delimiter: | (pipe) — unlikely to appear in tag/actor names.
+
+export const filtersToParams = (f) => {
+    const arr = (a) => (a?.length ? a.join('|') : null);
+    return {
+        q:    f.search    || null,
+        tags: arr(f.tags),
+        txc:  arr(f.tagsExclude),
+        stu:  arr(f.studios),
+        sxc:  arr(f.studiosExclude),
+        act:  arr(f.actors),
+        axc:  arr(f.actorsExclude),
+        chr:  arr(f.characters),
+        cxc:  arr(f.charactersExclude),
+        yr:   f.year      || null,
+        fav:  f.favorite  ? '1' : null,
+        // omit defaults so URLs stay clean
+        fm:   f.filterMode && f.filterMode !== DEFAULT_FILTERS.filterMode ? f.filterMode : null,
+        sort: f.sortBy    && f.sortBy    !== DEFAULT_FILTERS.sortBy  ? f.sortBy  : null,
+        ord:  f.order     && f.order     !== DEFAULT_FILTERS.order   ? f.order   : null,
+    };
+};
+
+export const paramsToFilters = (params) => {
+    const arr = (k) => params.get(k)?.split('|').filter(Boolean) || [];
+    return {
+        search:            params.get('q')   || '',
+        tags:              arr('tags'),
+        tagsExclude:       arr('txc'),
+        studios:           arr('stu'),
+        studiosExclude:    arr('sxc'),
+        actors:            arr('act'),
+        actorsExclude:     arr('axc'),
+        characters:        arr('chr'),
+        charactersExclude: arr('cxc'),
+        year:              params.get('yr')  || '',
+        favorite:          params.get('fav') === '1',
+        filterMode:        params.get('fm')  || DEFAULT_FILTERS.filterMode,
+        sortBy:            params.get('sort')|| DEFAULT_FILTERS.sortBy,
+        order:             params.get('ord') || DEFAULT_FILTERS.order,
+    };
+};
+
+// ─── cycleItem ────────────────────────────────────────────────────────────────
 function cycleItem(filters, field, item) {
     const inclField = field;
     const exclField = `${field}Exclude`;
@@ -30,6 +76,7 @@ function cycleItem(filters, field, item) {
     }
 }
 
+// ─── FilterSidebar ────────────────────────────────────────────────────────────
 function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters, mode = 'videos' }) {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError]         = useState(null);
@@ -68,7 +115,7 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters, mode =
     const handleChange = (key, value) => setLocalFilters(prev => ({ ...prev, [key]: value }));
     const handleCycle  = (field, item) => setLocalFilters(prev => cycleItem(prev, field, item));
     const applyFilters = () => { onFilterChange(localFilters); onClose(); };
-    const resetFilters = () => { setLocalFilters(DEFAULT_FILTERS); onFilterChange(DEFAULT_FILTERS); };
+    const resetFilters = () => { setLocalFilters(DEFAULT_FILTERS); onFilterChange(DEFAULT_FILTERS); onClose(); };
 
     const activeCount =
         (localFilters.tags?.length || 0)       + (localFilters.tagsExclude?.length || 0) +
@@ -82,16 +129,13 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters, mode =
     if (!isOpen) return null;
 
     return (
-        // Full-screen overlay — overflow-hidden stops double scrollbars
         <div className="fixed inset-0 z-50 overflow-hidden bg-slate-900 flex flex-col">
-
-            {/* Modal shell — flex column that fills the overlay */}
             <div className="flex flex-col h-full w-full max-w-3xl mx-auto">
 
-                {/* ── Header: flex-none so it never grows/shrinks ── */}
-                <div className="flex-none flex items-center justify-between px-6 py-4 border-b border-slate-800">
-                    <h2 className="text-2xl font-bold text-white flex items-center gap-2">
-                        <Filter className="w-6 h-6 text-red-500" />
+                {/* Header */}
+                <div className="flex-none flex items-center justify-between px-4 sm:px-6 py-4 border-b border-slate-800">
+                    <h2 className="text-xl sm:text-2xl font-bold text-white flex items-center gap-2">
+                        <Filter className="w-5 h-5 sm:w-6 sm:h-6 text-red-500" />
                         Filters
                         {activeCount > 0 && (
                             <span className="ml-1 text-sm font-normal text-slate-400">({activeCount} active)</span>
@@ -102,8 +146,8 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters, mode =
                     </button>
                 </div>
 
-                {/* ── Scrollable body: flex-1 + min-h-0 is what makes overflow-y-auto work ── */}
-                <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4">
+                {/* Scrollable body */}
+                <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 py-4">
 
                     {isLoading && (
                         <div className="flex items-center gap-2 text-slate-400 text-sm mb-4">
@@ -120,7 +164,7 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters, mode =
                                 value={localFilters.search}
                                 onChange={e => handleChange('search', e.target.value)}
                                 placeholder="Search by title…"
-                                className="w-full pl-10 pr-4 py-2 bg-slate-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 text-sm"
+                                className="w-full pl-10 pr-4 py-2.5 bg-slate-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 text-sm"
                             />
                         </div>
                     </Section>
@@ -144,7 +188,8 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters, mode =
                         </p>
                     </Section>
 
-                    <div className="mb-5 flex flex-wrap items-center gap-4 text-xs text-slate-400">
+                    {/* Chip legend */}
+                    <div className="mb-5 flex flex-wrap items-center gap-3 text-xs text-slate-400">
                         <span className="flex items-center gap-1.5">
                             <span className="w-3 h-3 rounded-full bg-green-500/40 border-2 border-dashed border-green-400 inline-block" />
                             Click once = include
@@ -170,7 +215,7 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters, mode =
 
                     <Section title="Year">
                         <select value={localFilters.year} onChange={e => handleChange('year', e.target.value)}
-                            className="w-full px-3 py-2 bg-slate-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 text-sm">
+                            className="w-full px-3 py-2.5 bg-slate-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 text-sm">
                             <option value="">All Years</option>
                             {years.map(y => <option key={y} value={y}>{y}</option>)}
                         </select>
@@ -179,7 +224,7 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters, mode =
                     <Section title="Sort By">
                         <div className="flex gap-2">
                             <select value={localFilters.sortBy} onChange={e => handleChange('sortBy', e.target.value)}
-                                className="flex-1 px-3 py-2 bg-slate-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 text-sm">
+                                className="flex-1 px-3 py-2.5 bg-slate-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 text-sm">
                                 <option value="updatedAt">Updated</option>
                                 <option value="createdAt">Added</option>
                                 <option value="title">Title</option>
@@ -187,7 +232,7 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters, mode =
                                 <option value="views">Views</option>
                             </select>
                             <select value={localFilters.order} onChange={e => handleChange('order', e.target.value)}
-                                className="px-3 py-2 bg-slate-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 text-sm">
+                                className="px-3 py-2.5 bg-slate-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 text-sm">
                                 <option value="desc">↓ Desc</option>
                                 <option value="asc">↑ Asc</option>
                             </select>
@@ -222,16 +267,20 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters, mode =
                     )}
                 </div>
 
-                {/* ── Footer: flex-none so it sticks to the bottom ── */}
-                <div className="flex-none border-t border-slate-800 px-6 py-4">
+                {/* Footer */}
+                <div className="flex-none border-t border-slate-800 px-4 sm:px-6 py-4">
                     <div className="flex gap-3">
                         <button onClick={applyFilters}
-                            className="flex-1 py-3 bg-red-500 text-white rounded-lg font-semibold hover:bg-red-600 transition">
-                            Apply Filters{activeCount > 0 ? ` (${activeCount})` : ''}
+                            className="flex-1 py-3 bg-red-500 text-white rounded-lg font-semibold hover:bg-red-600 transition text-sm sm:text-base">
+                            Apply{activeCount > 0 ? ` (${activeCount})` : ''}
                         </button>
                         <button onClick={resetFilters}
-                            className="px-5 py-3 bg-slate-700 text-white rounded-lg font-medium hover:bg-slate-600 transition">
+                            className="px-4 sm:px-5 py-3 bg-slate-700 text-white rounded-lg font-medium hover:bg-slate-600 transition text-sm sm:text-base">
                             Reset
+                        </button>
+                        <button onClick={onClose}
+                            className="px-4 py-3 bg-slate-800 text-slate-400 rounded-lg hover:bg-slate-700 transition text-sm sm:text-base">
+                            Cancel
                         </button>
                     </div>
                 </div>

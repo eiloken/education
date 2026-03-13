@@ -63,6 +63,36 @@ async function rebuildSeriesMetadata(seriesId) {
     });
 }
 
+// ─── Smart multi-field search — escapes the term then applies a per-word
+//     regex across title, description, tags, studios, actors, characters.
+//     Each word must match at least one field (AND between words, OR across fields).
+function applySmartSearch(query, search) {
+    if (!search?.trim()) return;
+    const terms = search.trim().split(/\s+/).filter(Boolean);
+    const termClauses = terms.map(term => {
+        // Escape special regex chars so user input is treated as a literal string
+        const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const r = new RegExp(escaped, 'i');
+        return {
+            $or: [
+                { title:       r },
+                { description: r },
+                { tags:        r },
+                { studios:     r },
+                { actors:      r },
+                { characters:  r },
+            ],
+        };
+    });
+    if (termClauses.length === 1) {
+        // Single word: merge $or directly (avoids wrapping in $and unnecessarily)
+        query.$or = termClauses[0].$or;
+    } else {
+        // Multiple words: each must match somewhere
+        query.$and = (query.$and || []).concat(termClauses);
+    }
+}
+
 // ─── Build MongoDB query from filter params ───────────────────────────────────
 function buildFilterQuery(params, userFavoriteIds = null) {
     const {
@@ -91,11 +121,10 @@ function buildFilterQuery(params, userFavoriteIds = null) {
     applyField('characters', characters, charactersExclude);
 
     if (year)     query.year      = parseInt(year);
-    if (search)   query.$text     = { $search: search };
     if (dateFrom) query.updatedAt = { $gte: new Date(dateFrom) };
+    if (search)   applySmartSearch(query, search);
 
     if (favorite === 'true') {
-        // Per-user favorites filter
         query._id = { $in: userFavoriteIds ?? [] };
     }
 
@@ -182,13 +211,7 @@ router.post('/upload', requireAdmin, upload.single('video'), async (req, res) =>
 
         const { title, description, tags, studios, actors, characters, year, seriesId, episodeNumber, seasonNumber } = req.body;
 
-        if (seriesId) {
-            const series = await Series.findById(seriesId);
-            if (!series) { fs.unlinkSync(req.file.path); return res.status(400).json({ error: 'Series not found' }); }
-        }
-
-        const videoFileName     = req.file.filename;
-        const videoPath         = path.join(uploadDir, videoFileName);
+        const videoPath        = path.join(uploadDir, req.file.filename);
         const thumbnailFileName = `THUMB-${uuidv4()}.jpg`;
         const thumbnailPath     = path.join(thumbnailDir, thumbnailFileName);
 
@@ -204,7 +227,7 @@ router.post('/upload', requireAdmin, upload.single('video'), async (req, res) =>
             actors:        actors      ? JSON.parse(actors)      : [],
             characters:    characters  ? JSON.parse(characters)  : [],
             year:          year        ? parseInt(year)          : null,
-            videoPath:     videoFileName,
+            videoPath:     req.file.filename,
             thumbnailPath: thumbnailFileName,
             duration,
             fileSize:      stats.size,
@@ -244,7 +267,6 @@ router.put('/:id', requireAdmin, async (req, res) => {
 });
 
 // ─── PATCH /api/videos/:id/favorite  [requires login] ────────────────────────
-// Kept for backward compat; delegates to Favorite collection.
 router.patch('/:id/favorite', authenticate, async (req, res) => {
     try {
         const existing = await Favorite.findOne({ userId: req.user._id, itemId: req.params.id, itemType: 'video' });

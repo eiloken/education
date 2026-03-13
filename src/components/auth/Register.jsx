@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Film, AlertCircle, CheckCircle2, ArrowLeft } from 'lucide-react';
-import { authAPI } from '../api/api';
+import { authAPI } from '../../api/api';
 
 export default function Register({ onShowLogin }) {
     const [form, setForm]       = useState({ username: '', email: '', reason: '' });
