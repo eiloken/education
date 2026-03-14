@@ -1,5 +1,5 @@
 import React, { forwardRef, Fragment, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
-import { seriesAPI, activityAPI } from "../api/api";
+import { seriesAPI, videoAPI, activityAPI } from "../api/api";
 import toast from "react-hot-toast";
 import {
     ChevronLeft, ChevronRight, ChevronUp,
@@ -15,6 +15,7 @@ import Dashboard from "./Dashboard";
 import AdminRequests from "./auth/AdminRequests.jsx";
 import UserProfile from "./auth/UserProfile.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
+import VideoCard from "./videos/VideoCard.jsx";
 
 // ─── Util ─────────────────────────────────────────────────────────────────────
 const daysAgoISO = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString(); };
@@ -204,6 +205,10 @@ function Home() {
     const [seriesLoading,   setSeriesLoading]    = useState(false);
     const [seriesTotalPages,setSeriesTotalPages] = useState(1);
 
+    const [videoList,       setVideoList]        = useState([]);
+    const [videoLoading,    setVideoLoading]     = useState(false);
+    const [videoTotalPages, setVideoTotalPages]  = useState(1);
+
     const [showFilters,     setShowFilters]      = useState(false);
     const [searchTerm,      setSearchTerm]       = useState(filters.search || '');
     const [showQuickSearch, setShowQuickSearch]  = useState(false);
@@ -261,18 +266,27 @@ function Home() {
     const fetchSeriesContent = useCallback(async () => {
         setSeriesLoading(true);
         try {
-            const base = homeMode === 'detail' && detailSection
-                ? { ...detailSection.getParams(), page: seriesPage, limit: 20 }
-                : buildApiParams({ page: seriesPage });
+            const base = { ...detailSection.getParams(), page: seriesPage, limit: 20 };
             const data = await seriesAPI.getSeries(base);
             setSeriesList(data.series || []);
             setSeriesTotalPages(data.totalPages || 1);
         } catch (err) { toast.error('Failed to load series'); }
         finally { setSeriesLoading(false); }
-    }, [homeMode, detailSection, seriesPage, buildApiParams]);
+    }, [detailSection, seriesPage]);
+
+    const fetchVideoContent = useCallback(async () => {
+        setVideoLoading(true);
+        try {
+            const data = await videoAPI.getVideos(buildApiParams({ page: seriesPage }));
+            setVideoList(data.videos || []);
+            setVideoTotalPages(data.totalPages || 1);
+        } catch (err) { toast.error('Failed to load videos'); }
+        finally { setVideoLoading(false); }
+    }, [seriesPage, buildApiParams]);
 
     useEffect(() => { if (homeMode === 'home') fetchSections(); }, [homeMode, fetchSections]);
-    useEffect(() => { if (homeMode !== 'home') fetchSeriesContent(); }, [homeMode, fetchSeriesContent]);
+    useEffect(() => { if (homeMode === 'detail') fetchSeriesContent(); }, [homeMode, fetchSeriesContent]);
+    useEffect(() => { if (homeMode === 'filtered') fetchVideoContent(); }, [homeMode, fetchVideoContent]);
 
     useEffect(() => { setSearchTerm(filters.search || ''); }, [filters.search]);
 
@@ -314,6 +328,17 @@ function Home() {
             seriesAPI.toggleFavorite(seriesId).then(res => {
                 if (!res?.success) throw new Error();
                 applyFavToggle(seriesId, res.isFavorite);
+            }),
+            { loading: 'Updating…', success: 'Favorite updated', error: 'Failed' }
+        );
+    };
+
+    const handleToggleFavoriteVideo = (videoId) => {
+        if (!user) { toast.error('Sign in to add favorites'); return; }
+        toast.promise(
+            videoAPI.toggleFavorite(videoId).then(res => {
+                if (!res?.success) throw new Error();
+                setVideoList(prev => prev.map(v => v._id === videoId ? { ...v, isFavorite: res.isFavorite } : v));
             }),
             { loading: 'Updating…', success: 'Favorite updated', error: 'Failed' }
         );
@@ -543,7 +568,7 @@ function Home() {
                             )
                         )}
 
-                        {(homeMode === 'detail' || homeMode === 'filtered') && (
+                        {homeMode === 'detail' && (
                             <>
                                 {!seriesLoading && seriesList.length === 0 ? (
                                     <EmptyState hasFilters={hasFilters} navigate={navigate} isAdmin={isAdmin} />
@@ -559,6 +584,30 @@ function Home() {
                                                     ))}
                                                 </ContentGrid>
                                                 <Pagination currentPage={seriesPage} totalPages={seriesTotalPages}
+                                                    onPageChange={p => { updateParams({ seriesPage: String(p) }); window.scrollTo({ top: 0, behavior: 'smooth' }); }} />
+                                            </>
+                                        )}
+                                    </>
+                                )}
+                            </>
+                        )}
+
+                        {homeMode === 'filtered' && (
+                            <>
+                                {!videoLoading && videoList.length === 0 ? (
+                                    <EmptyState hasFilters={hasFilters} navigate={navigate} isAdmin={isAdmin} />
+                                ) : (
+                                    <>
+                                        {videoLoading ? <LoadingSpinner /> : (
+                                            <>
+                                                <ContentGrid>
+                                                    {videoList.map(video => (
+                                                        <VideoCard key={video._id} video={video}
+                                                            onToggleFavorite={() => handleToggleFavoriteVideo(video._id)}
+                                                            {...cardProps} />
+                                                    ))}
+                                                </ContentGrid>
+                                                <Pagination currentPage={seriesPage} totalPages={videoTotalPages}
                                                     onPageChange={p => { updateParams({ seriesPage: String(p) }); window.scrollTo({ top: 0, behavior: 'smooth' }); }} />
                                             </>
                                         )}
