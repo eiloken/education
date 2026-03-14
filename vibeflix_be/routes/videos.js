@@ -32,6 +32,27 @@ const upload = multer({
     },
 });
 
+// Combined multer for upload route: routes video→uploadDir, thumbnail→thumbnailDir
+const uploadWithThumb = multer({
+    storage: multer.diskStorage({
+        destination: (req, file, cb) => cb(null, file.fieldname === 'thumbnail' ? thumbnailDir : uploadDir),
+        filename:    (req, file, cb) => {
+            if (file.fieldname === 'thumbnail') {
+                cb(null, `THUMB-${uuidv4()}${path.extname(file.originalname) || '.jpg'}`);
+            } else {
+                cb(null, `VID_${uuidv4()}${path.extname(file.originalname)}`);
+            }
+        },
+    }),
+    limits: { fileSize: 10 * 1024 * 1024 * 1024 },
+    fileFilter: (req, file, cb) => {
+        if (file.fieldname === 'thumbnail') { cb(null, true); return; }
+        const allowed = /mp4|mkv|avi|mov|wmv|flv|webm/;
+        const ok = allowed.test(path.extname(file.originalname).toLowerCase()) && allowed.test(file.mimetype);
+        ok ? cb(null, true) : cb(new Error('Only video files are allowed!'));
+    },
+});
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 async function generateThumbnail(videoPath, outputPath) {
     const duration = await getVideoDuration(videoPath);
@@ -63,14 +84,10 @@ async function rebuildSeriesMetadata(seriesId) {
     });
 }
 
-// ─── Smart multi-field search — escapes the term then applies a per-word
-//     regex across title, description, tags, studios, actors, characters.
-//     Each word must match at least one field (AND between words, OR across fields).
 function applySmartSearch(query, search) {
     if (!search?.trim()) return;
     const terms = search.trim().split(/\s+/).filter(Boolean);
     const termClauses = terms.map(term => {
-        // Escape special regex chars so user input is treated as a literal string
         const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const r = new RegExp(escaped, 'i');
         return {
@@ -85,18 +102,15 @@ function applySmartSearch(query, search) {
         };
     });
     if (termClauses.length === 1) {
-        // Single word: merge $or directly (avoids wrapping in $and unnecessarily)
         query.$or = termClauses[0].$or;
     } else {
-        // Multiple words: each must match somewhere
         query.$and = (query.$and || []).concat(termClauses);
     }
 }
 
-// ─── Build MongoDB query from filter params ───────────────────────────────────
 function buildFilterQuery(params, userFavoriteIds = null) {
     const {
-        exceptSeries, tags, tagsExclude,
+        tags, tagsExclude,
         studios, studiosExclude,
         actors, actorsExclude,
         characters, charactersExclude,
@@ -106,7 +120,7 @@ function buildFilterQuery(params, userFavoriteIds = null) {
     } = params;
 
     const op    = filterMode === 'and' ? '$all' : '$in';
-    const query = exceptSeries === 'true' ? { seriesId: null } : {};
+    const query = {};
 
     const applyField = (f, inc, exc) => {
         const c = {};
@@ -131,7 +145,6 @@ function buildFilterQuery(params, userFavoriteIds = null) {
     return query;
 }
 
-/** Annotate a list of Mongoose video docs with isFavorite per user */
 function annotateWithFavorites(videos, favoriteIdSet) {
     return videos.map(v => ({
         ...v.toObject(),
@@ -145,7 +158,6 @@ router.get("/", async (req, res) => {
         const { page = 1, limit = 20, sortBy = 'updatedAt', order = 'desc' } = req.query;
         const sortOrder = order === 'asc' ? 1 : -1;
 
-        // Resolve user favorites once for both filter and annotation
         let userFavIds = null;
         let favSet     = new Set();
         if (req.user) {
@@ -205,44 +217,107 @@ router.get('/:id', async (req, res) => {
 });
 
 // ─── POST /api/videos/upload  [admin only] ────────────────────────────────────
-router.post('/upload', requireAdmin, upload.single('video'), async (req, res) => {
+// All videos belong to a series. If no seriesId is provided, a new series is
+// auto-created using the video's title, metadata, and thumbnail.
+router.post('/upload', requireAdmin, uploadWithThumb.fields([{name:'video',maxCount:1},{name:'thumbnail',maxCount:1}]), async (req, res) => {
     try {
-        if (!req.file) return res.status(400).json({ error: 'No video file uploaded' });
+        if (!req.files?.video?.[0]) return res.status(400).json({ error: 'No video file uploaded' });
+
+        const videoFile = req.files.video[0];
+        const thumbFile = req.files.thumbnail?.[0];
 
         const { title, description, tags, studios, actors, characters, year, seriesId, episodeNumber, seasonNumber } = req.body;
 
-        const videoPath        = path.join(uploadDir, req.file.filename);
-        const thumbnailFileName = `THUMB-${uuidv4()}.jpg`;
-        const thumbnailPath     = path.join(thumbnailDir, thumbnailFileName);
+        const videoPath = path.join(uploadDir, videoFile.filename);
 
-        await generateThumbnail(videoPath, thumbnailPath);
+        // Use the user-supplied thumbnail, or auto-generate one from the video
+        let thumbnailFileName;
+        if (thumbFile) {
+            thumbnailFileName = thumbFile.filename;
+        } else {
+            thumbnailFileName = `THUMB-${uuidv4()}.jpg`;
+            await generateThumbnail(videoPath, path.join(thumbnailDir, thumbnailFileName));
+        }
         const duration = await getVideoDuration(videoPath);
         const stats    = fs.statSync(videoPath);
 
+        const parsedTags       = tags       ? JSON.parse(tags)       : [];
+        const parsedStudios    = studios    ? JSON.parse(studios)    : [];
+        const parsedActors     = actors     ? JSON.parse(actors)     : [];
+        const parsedCharacters = characters ? JSON.parse(characters) : [];
+        const parsedYear       = year       ? parseInt(year)         : null;
+        const videoTitle       = title?.trim() || videoFile.originalname.replace(/\.[^.]+$/, '');
+
+        // ── Resolve series: use provided one, or auto-create ─────────────────
+        let resolvedSeriesId = seriesId || null;
+        let resolvedEpisodeNumber = episodeNumber ? parseInt(episodeNumber) : null;
+        let resolvedSeasonNumber  = seasonNumber  ? parseInt(seasonNumber)  : null;
+        let autoCreatedSeries = null;
+
+        if (!resolvedSeriesId) {
+            // Auto-create a series named after the video; inherit video thumbnail
+            autoCreatedSeries = await new Series({
+                title:        videoTitle,
+                description:  description?.trim() || '',
+                tags:         parsedTags,
+                studios:      parsedStudios,
+                actors:       parsedActors,
+                characters:   parsedCharacters,
+                year:         parsedYear,
+                thumbnailPath: thumbnailFileName,  // share the same thumbnail
+            }).save();
+            resolvedSeriesId      = autoCreatedSeries._id;
+            resolvedEpisodeNumber = 1;
+            resolvedSeasonNumber  = 1;
+        } else {
+            // Assign next episode number if not provided
+            if (!resolvedEpisodeNumber) {
+                const lastEp = await Video.findOne({ seriesId: resolvedSeriesId })
+                    .sort({ episodeNumber: -1 })
+                    .select('episodeNumber');
+                resolvedEpisodeNumber = (lastEp?.episodeNumber || 0) + 1;
+            }
+            if (!resolvedSeasonNumber) resolvedSeasonNumber = 1;
+        }
+
         const videoData = {
-            title:         title?.trim() || req.file.originalname,
+            title:         videoTitle,
             description:   description?.trim() || '',
-            tags:          tags        ? JSON.parse(tags)        : [],
-            studios:       studios     ? JSON.parse(studios)     : [],
-            actors:        actors      ? JSON.parse(actors)      : [],
-            characters:    characters  ? JSON.parse(characters)  : [],
-            year:          year        ? parseInt(year)          : null,
-            videoPath:     req.file.filename,
+            tags:          parsedTags,
+            studios:       parsedStudios,
+            actors:        parsedActors,
+            characters:    parsedCharacters,
+            year:          parsedYear,
+            videoPath:     videoFile.filename,
             thumbnailPath: thumbnailFileName,
             duration,
             fileSize:      stats.size,
-            seriesId:      seriesId || null,
-            episodeNumber: episodeNumber ? parseInt(episodeNumber) : null,
-            seasonNumber:  seasonNumber  ? parseInt(seasonNumber)  : null,
+            seriesId:      resolvedSeriesId,
+            episodeNumber: resolvedEpisodeNumber,
+            seasonNumber:  resolvedSeasonNumber,
         };
 
         const newVideo = await new Video(videoData).save();
-        if (newVideo.seriesId) await rebuildSeriesMetadata(newVideo.seriesId);
 
-        res.status(201).json({ success: true, message: seriesId ? 'Episode uploaded' : 'Video uploaded', video: newVideo });
+        // Sync series thumbnail if the series has none yet (existing series)
+        if (!autoCreatedSeries) {
+            const series = await Series.findById(resolvedSeriesId);
+            if (series && !series.thumbnailPath) {
+                await Series.findByIdAndUpdate(resolvedSeriesId, { thumbnailPath: thumbnailFileName });
+            }
+            await rebuildSeriesMetadata(resolvedSeriesId);
+        }
+
+        res.status(201).json({
+            success: true,
+            message: autoCreatedSeries ? 'Video uploaded and series created' : 'Episode uploaded',
+            video:   newVideo,
+            series:  autoCreatedSeries || { _id: resolvedSeriesId },
+            autoCreatedSeries: !!autoCreatedSeries,
+        });
     } catch (error) {
         console.error('Error uploading video:', error);
-        if (req.file) { try { fs.unlinkSync(req.file.path); } catch (_) {} }
+        if (videoFile) { try { fs.unlinkSync(videoFile.path); } catch (_) {} }
         res.status(500).json({ error: error.message });
     }
 });
@@ -282,6 +357,7 @@ router.patch('/:id/favorite', authenticate, async (req, res) => {
 });
 
 // ─── DELETE /api/videos/:id  [admin only] ────────────────────────────────────
+// If deleting the last episode of a series, also deletes the series.
 router.delete('/:id', requireAdmin, async (req, res) => {
     try {
         const video = await Video.findById(req.params.id);
@@ -295,7 +371,23 @@ router.delete('/:id', requireAdmin, async (req, res) => {
             Video.findByIdAndDelete(req.params.id),
             Favorite.deleteMany({ itemId: req.params.id, itemType: 'video' }),
         ]);
-        if (seriesId) await rebuildSeriesMetadata(seriesId);
+
+        if (seriesId) {
+            const remainingEpisodes = await Video.countDocuments({ seriesId });
+            if (remainingEpisodes === 0) {
+                // Clean up the now-empty series
+                const series = await Series.findById(seriesId);
+                if (series?.thumbnailPath) {
+                    try { const p = path.join(thumbnailDir, series.thumbnailPath); if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {}
+                }
+                await Promise.all([
+                    Series.findByIdAndDelete(seriesId),
+                    Favorite.deleteMany({ itemId: seriesId, itemType: 'series' }),
+                ]);
+            } else {
+                await rebuildSeriesMetadata(seriesId);
+            }
+        }
 
         res.json({ success: true, message: 'Video deleted' });
     } catch (error) {
@@ -377,6 +469,100 @@ router.get('/:id/stream', async (req, res) => {
             res.writeHead(200, { 'Content-Length': fileSize, 'Content-Type': 'video/mp4' });
             fs.createReadStream(videoFilePath).pipe(res);
         }
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+
+// ─── POST /api/videos/:id/thumbnails/generate  [admin only] ──────────────────
+// Generates 5 candidate thumbnails at evenly-spaced positions across the video.
+router.post('/:id/thumbnails/generate', requireAdmin, async (req, res) => {
+    try {
+        const video = await Video.findById(req.params.id);
+        if (!video) return res.status(404).json({ error: 'Video not found' });
+
+        const videoFilePath = path.join(uploadDir, video.videoPath);
+        if (!fs.existsSync(videoFilePath))
+            return res.status(404).json({ error: 'Video file not found on disk' });
+
+        const count    = 5;
+        const duration = await getVideoDuration(videoFilePath);
+        if (!duration || duration < 1)
+            return res.status(400).json({ error: 'Could not determine video duration' });
+
+        // Purge any leftover temp thumbnails from a previous generate call
+        const prefix = `TEMP-THUMB-${video._id}-`;
+        try {
+            fs.readdirSync(thumbnailDir)
+                .filter(f => f.startsWith(prefix))
+                .forEach(f => { try { fs.unlinkSync(path.join(thumbnailDir, f)); } catch (_) {} });
+        } catch (_) {}
+
+        const usable     = duration > 10 ? duration - 4 : duration * 0.85;
+        const step       = usable / (count + 1);
+        const timestamps = Array.from({ length: count }, (_, i) => 2 + step * (i + 1));
+
+        const results = await Promise.all(timestamps.map((ts, i) =>
+            new Promise((resolve) => {
+                const filename = `${prefix}${i}.jpg`;
+                const outPath  = path.join(thumbnailDir, filename);
+                Ffmpeg(videoFilePath)
+                    .seekInput(Math.min(Math.floor(ts), Math.floor(duration) - 1))
+                    .frames(1)
+                    .outputOptions('-vf', 'scale=640:-1')
+                    .output(outPath)
+                    .on('end',   () => resolve({ index: i, filename, ts: Math.floor(ts) }))
+                    .on('error', () => resolve(null))
+                    .run();
+            })
+        ));
+
+        const thumbnails = results
+            .filter(Boolean)
+            .sort((a, b) => a.index - b.index)
+            .map(t => ({ filename: t.filename, ts: t.ts }));
+
+        res.json({ success: true, thumbnails });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ─── POST /api/videos/:id/thumbnails/apply  [admin only] ─────────────────────
+// Promotes a temp thumbnail to the video's official thumbnail (no series sync).
+router.post('/:id/thumbnails/apply', requireAdmin, async (req, res) => {
+    try {
+        const { filename } = req.body;
+        if (!filename) return res.status(400).json({ error: 'filename is required' });
+
+        const prefix = `TEMP-THUMB-${req.params.id}-`;
+        if (!filename.startsWith(prefix))
+            return res.status(400).json({ error: 'Invalid thumbnail filename' });
+
+        const video = await Video.findById(req.params.id);
+        if (!video) return res.status(404).json({ error: 'Video not found' });
+
+        const srcPath = path.join(thumbnailDir, filename);
+        if (!fs.existsSync(srcPath))
+            return res.status(404).json({ error: 'Thumbnail file not found — regenerate and try again' });
+
+        const newFilename = `THUMB-${uuidv4()}.jpg`;
+        fs.copyFileSync(srcPath, path.join(thumbnailDir, newFilename));
+
+        if (video.thumbnailPath) {
+            try { const p = path.join(thumbnailDir, video.thumbnailPath); if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {}
+        }
+
+        try {
+            fs.readdirSync(thumbnailDir)
+                .filter(f => f.startsWith(prefix))
+                .forEach(f => { try { fs.unlinkSync(path.join(thumbnailDir, f)); } catch (_) {} });
+        } catch (_) {}
+
+        const updated = await Video.findByIdAndUpdate(req.params.id, { thumbnailPath: newFilename }, { new: true });
+
+        res.json({ success: true, thumbnailPath: newFilename, video: updated });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }

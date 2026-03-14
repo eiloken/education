@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { videoAPI, seriesAPI } from "../api/api";
+import { videoAPI } from "../api/api";
 import { Filter, Search, X, ToggleLeft, ToggleRight } from "lucide-react";
 
 export const DEFAULT_FILTERS = {
@@ -16,9 +16,6 @@ export const DEFAULT_FILTERS = {
 };
 
 // ─── URL serialisation helpers ────────────────────────────────────────────────
-// These keep the query-string compact so it never gets unwieldy.
-// Delimiter: | (pipe) — unlikely to appear in tag/actor names.
-
 export const filtersToParams = (f) => {
     const arr = (a) => (a?.length ? a.join('|') : null);
     return {
@@ -33,7 +30,6 @@ export const filtersToParams = (f) => {
         cxc:  arr(f.charactersExclude),
         yr:   f.year      || null,
         fav:  f.favorite  ? '1' : null,
-        // omit defaults so URLs stay clean
         fm:   f.filterMode && f.filterMode !== DEFAULT_FILTERS.filterMode ? f.filterMode : null,
         sort: f.sortBy    && f.sortBy    !== DEFAULT_FILTERS.sortBy  ? f.sortBy  : null,
         ord:  f.order     && f.order     !== DEFAULT_FILTERS.order   ? f.order   : null,
@@ -77,7 +73,8 @@ function cycleItem(filters, field, item) {
 }
 
 // ─── FilterSidebar ────────────────────────────────────────────────────────────
-function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters, mode = 'videos' }) {
+// Filters are always applied globally across all series (metadata sourced from videos).
+function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters }) {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError]         = useState(null);
     const [tags, setTags]           = useState([]);
@@ -86,7 +83,6 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters, mode =
     const [characters, setChars]    = useState([]);
     const [localFilters, setLocalFilters] = useState({ ...DEFAULT_FILTERS });
 
-    // Lock body scroll while open
     useEffect(() => {
         document.body.style.overflow = isOpen ? 'hidden' : '';
         return () => { document.body.style.overflow = ''; };
@@ -95,19 +91,21 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters, mode =
     const fetchFilterOptions = useCallback(async () => {
         setIsLoading(true); setError(null);
         try {
-            const api = mode === 'series' ? seriesAPI : videoAPI;
             const [tagsData, studiosData, actorsData, charsData] = await Promise.all([
-                api.getTags       ? api.getTags()       : [],
-                api.getStudios    ? api.getStudios()    : [],
-                api.getActors     ? api.getActors()     : [],
-                api.getCharacters ? api.getCharacters() : []
+                videoAPI.getTags(),
+                videoAPI.getStudios(),
+                videoAPI.getActors(),
+                videoAPI.getCharacters(),
             ]);
-            setTags(tagsData || []); setStudios(studiosData || []);
-            setActors(actorsData || []); setChars(charsData || []);
+            setTags(tagsData || []);
+            setStudios(studiosData || []);
+            setActors(actorsData || []);
+            setChars(charsData || []);
         } catch (err) {
-            console.error('Error fetching filter options:', err); setError(err);
+            console.error('Error fetching filter options:', err);
+            setError(err);
         } finally { setIsLoading(false); }
-    }, [mode]);
+    }, []);
 
     useEffect(() => { fetchFilterOptions(); }, [fetchFilterOptions]);
     useEffect(() => { if (currentFilters) setLocalFilters({ ...DEFAULT_FILTERS, ...currentFilters }); }, [currentFilters]);
@@ -159,13 +157,10 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters, mode =
                     <Section title="Search">
                         <div className="relative">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                            <input
-                                type="text"
-                                value={localFilters.search}
+                            <input type="text" value={localFilters.search}
                                 onChange={e => handleChange('search', e.target.value)}
                                 placeholder="Search by title…"
-                                className="w-full pl-10 pr-4 py-2.5 bg-slate-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 text-sm"
-                            />
+                                className="w-full pl-10 pr-4 py-2.5 bg-slate-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 text-sm" />
                         </div>
                     </Section>
 
@@ -176,8 +171,7 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters, mode =
                                 localFilters.filterMode === 'and'
                                     ? 'border-red-500 bg-red-500/20 text-red-300'
                                     : 'border-slate-600 bg-slate-700 text-slate-300'
-                            }`}
-                        >
+                            }`}>
                             {localFilters.filterMode === 'and' ? <ToggleRight className="w-5 h-5" /> : <ToggleLeft className="w-5 h-5" />}
                             {localFilters.filterMode === 'and' ? 'AND — all tags must match' : 'OR — any tag matches'}
                         </button>

@@ -1,10 +1,57 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { seriesAPI, videoAPI } from "../../api/api";
+import { generalAPI, seriesAPI, videoAPI } from "../../api/api";
 import toast from "react-hot-toast";
-import { ArrowLeft, Image, Layers, Loader, Plus, Save, Trash2, X } from "lucide-react";
+import { ArrowLeft, Check, Image, ImagePlay, Layers, Loader, Plus, RefreshCw, Save, Trash2, X } from "lucide-react";
+
+// ─── ThumbnailStrip ───────────────────────────────────────────────────────────
+function ThumbnailStrip({ candidates, selected, onSelect, loading, disabled = false }) {
+    const fmt   = s => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+    const isSel = t => selected?.filename === t.filename;
+
+    if (loading) return (
+        <div className="grid grid-cols-5 gap-1.5 sm:gap-2">
+            {Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="aspect-video bg-slate-700 rounded-lg animate-pulse" />
+            ))}
+        </div>
+    );
+    if (!candidates.length) return null;
+
+    return (
+        <div className="grid grid-cols-5 gap-1.5 sm:gap-2">
+            {candidates.map(thumb => {
+                const sel = isSel(thumb);
+                return (
+                    <button key={thumb.filename} type="button" disabled={disabled}
+                        onClick={() => onSelect(sel ? null : thumb)}
+                        className={`relative rounded-lg overflow-hidden aspect-video border-2 transition-all focus:outline-none disabled:cursor-not-allowed ${
+                            sel
+                                ? 'border-red-500 ring-2 ring-red-500/30 scale-[1.04]'
+                                : 'border-slate-700 hover:border-slate-500 hover:scale-[1.02]'
+                        }`}
+                    >
+                        <img src={thumb.url} alt="" className="w-full h-full object-cover"
+                            onError={e => { e.target.style.display = 'none'; }} />
+                        <div className="absolute bottom-0.5 left-0.5 px-1 py-0.5 bg-black/75 text-white text-[9px] sm:text-[10px] rounded font-mono leading-none">
+                            {fmt(thumb.ts)}
+                        </div>
+                        {sel && (
+                            <div className="absolute inset-0 bg-red-500/25 flex items-center justify-center">
+                                <div className="bg-red-500 rounded-full p-1 shadow">
+                                    <Check className="w-2.5 h-2.5 text-white" strokeWidth={3} />
+                                </div>
+                            </div>
+                        )}
+                    </button>
+                );
+            })}
+        </div>
+    );
+}
 
 // mode: 'create' | 'edit'
+
 function CreateSeries({ mode = 'create' }) {
     const navigate = useNavigate();
     const { id } = useParams();
@@ -15,6 +62,12 @@ function CreateSeries({ mode = 'create' }) {
     const [pageLoading, setPageLoading] = useState(mode === 'edit');
     const [saving, setSaving] = useState(false);
     const [existingSeries, setExistingSeries] = useState(null);
+
+    // ── Thumbnail generation from episode ──────────────────────────────────
+    const [thumbCandidates,  setThumbCandidates]  = useState([]);
+    const [selectedThumb,    setSelectedThumb]    = useState(null);
+    const [generatingThumbs, setGeneratingThumbs] = useState(false);
+
 
     const [formData, setFormData] = useState({
         title: "",
@@ -81,6 +134,53 @@ function CreateSeries({ mode = 'create' }) {
         if (!file || !file.type.startsWith('image/')) return;
         setThumbnailFile(file);
         setThumbnailPreview(URL.createObjectURL(file));
+    };
+
+    // Generate 5 thumbnail candidates from a random episode (edit mode only)
+    const handleGenerateThumbs = async () => {
+        if (!id) return;
+        setGeneratingThumbs(true);
+        setThumbCandidates([]);
+        setSelectedThumb(null);
+        try {
+            const data     = await seriesAPI.getSeriesWithEpisodes(id);
+            const episodes = data.episodes || [];
+            if (!episodes.length) {
+                toast.error('No episodes found — add an episode first');
+                return;
+            }
+            const episode = episodes[Math.floor(Math.random() * episodes.length)];
+            const res     = await videoAPI.generateThumbnails(episode._id, 5);
+            if (!res.success || !res.thumbnails?.length) {
+                toast.error('Failed to generate thumbnails');
+                return;
+            }
+            setThumbCandidates(res.thumbnails.map(t => ({
+                ...t,
+                url: generalAPI.thumbnailUrl(t.filename),
+            })));
+        } catch (err) {
+            toast.error(err?.response?.data?.error || 'Failed to generate thumbnails');
+        } finally {
+            setGeneratingThumbs(false);
+        }
+    };
+
+    // When a generated thumbnail is selected, fetch it as a blob so the normal
+    // series FormData upload flow can use it without any new backend endpoint
+    const handleSelectThumb = async (thumb) => {
+        if (!thumb) { setSelectedThumb(null); return; }
+        setSelectedThumb(thumb);
+        try {
+            const resp = await fetch(thumb.url, { credentials: 'include' });
+            const blob = await resp.blob();
+            const file = new File([blob], thumb.filename, { type: 'image/jpeg' });
+            setThumbnailFile(file);
+            setThumbnailPreview(thumb.url);
+        } catch {
+            toast.error('Failed to use selected thumbnail');
+            setSelectedThumb(null);
+        }
     };
 
     const handleSubmit = async () => {
@@ -246,6 +346,51 @@ function CreateSeries({ mode = 'create' }) {
                                 <p className="text-xs text-slate-500 mt-2">JPG, PNG, or WebP. Recommended: 16:9 aspect ratio.</p>
                             </div>
                         </div>
+
+                        {/* Generate from episode (edit mode only) */}
+                        {mode === 'edit' && (
+                            <div className="mt-5 pt-5 border-t border-slate-700">
+                                <div className="flex items-center justify-between mb-3">
+                                    <p className="text-sm font-medium text-slate-300 flex items-center gap-2">
+                                        <ImagePlay className="w-4 h-4 text-red-400" />
+                                        Generate from episode
+                                    </p>
+                                    <button
+                                        type="button"
+                                        onClick={handleGenerateThumbs}
+                                        disabled={generatingThumbs || saving}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs sm:text-sm transition disabled:opacity-50"
+                                    >
+                                        {generatingThumbs
+                                            ? <><Loader className="w-3.5 h-3.5 animate-spin" /> Generating…</>
+                                            : <><RefreshCw className="w-3.5 h-3.5" /> {thumbCandidates.length ? 'Try again' : 'Generate'}</>
+                                        }
+                                    </button>
+                                </div>
+                                {(generatingThumbs || thumbCandidates.length > 0) ? (
+                                    <div>
+                                        <ThumbnailStrip
+                                            candidates={thumbCandidates}
+                                            selected={selectedThumb}
+                                            onSelect={handleSelectThumb}
+                                            loading={generatingThumbs}
+                                            disabled={saving}
+                                        />
+                                        {thumbCandidates.length > 0 && !generatingThumbs && (
+                                            <p className="text-xs text-slate-500 mt-2">
+                                                {selectedThumb
+                                                    ? '✓ Thumbnail selected — save to apply it'
+                                                    : 'Click a scene to use it as the series thumbnail'}
+                                            </p>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <p className="text-xs text-slate-500">
+                                        Picks a random episode and extracts 5 scenes to choose from.
+                                    </p>
+                                )}
+                            </div>
+                        )}
                     </div>
 
                     {/* Basic Info */}

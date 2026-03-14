@@ -115,7 +115,7 @@ export function TagsContainer({ tags, color, onClick, limit }) {
     return (
         tags && tags.length > 0 && (
             <div className="flex flex-wrap gap-1 mt-1.5">
-                {(remaining > 0 ? tags.slice(0, newLimit) : tags).map((tag, i) => (
+                {(remaining > 0 ? tags.sort().slice(0, newLimit) : tags).map((tag, i) => (
                     <MetaChip key={i} label={tag} color={color} onClick={onClick} />
                 ))}
                 {remaining > 0 && <MetaChip label={`+${remaining}`} color={color} onClick={handleShowMore} />}

@@ -17,7 +17,7 @@ function FavCard({ item, onClose }) {
     return (
         <div
             className="group bg-slate-800 border border-slate-700 rounded-xl overflow-hidden hover:border-slate-600 transition cursor-pointer"
-            onClick={() => { navigate(isVideo ? `/watch/${item._id}` : `/series/${item._id}`); onClose(); }}
+            onClick={() => { navigate(isVideo ? `/video/${item._id}` : `/series/${item._id}`); onClose(); }}
         >
             <div className="aspect-video bg-slate-900 relative">
                 {thumbSrc

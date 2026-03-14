@@ -83,6 +83,12 @@ export const videoAPI = {
             onUploadProgress,
         })).data,
 
+    generateThumbnails: async (id, count = 5) =>
+        (await axios.post(`${API_URL}/api/videos/${id}/thumbnails/generate`, { count })).data,
+
+    applyThumbnail: async (id, filename, syncSeries = false) =>
+        (await axios.post(`${API_URL}/api/videos/${id}/thumbnails/apply`, { filename, syncSeries })).data,
+
     getStreamUrl: (id, quality) =>
         `${API_URL}/api/videos/${id}/stream${quality ? `?quality=${quality}` : ''}`,
 

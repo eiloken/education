@@ -1,15 +1,116 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { seriesAPI, videoAPI } from "../../api/api";
+import { generalAPI, seriesAPI, videoAPI } from "../../api/api";
 import toast from "react-hot-toast";
 import {
-    ArrowLeft, ChevronDown, Film, Layers, Loader,
+    ArrowLeft, Check, ChevronDown, Film, ImagePlay, Layers, Loader,
     Plus, RefreshCw, Search, Upload, X,
 } from "lucide-react";
 
+// ─── Client-side frame extractor (works before upload) ───────────────────────
+async function extractFrames(file, count = 5) {
+    return new Promise((resolve, reject) => {
+        const video   = document.createElement('video');
+        const src     = URL.createObjectURL(file);
+        video.src     = src;
+        video.muted   = true;
+        video.playsInline = true;
+        video.preload = 'metadata';
+        const cleanup = () => URL.revokeObjectURL(src);
+
+        video.addEventListener('loadedmetadata', async () => {
+            const dur = video.duration;
+            if (!dur || dur < 1) { cleanup(); reject(new Error('Cannot read duration')); return; }
+            const usable = dur > 10 ? dur - 4 : dur * 0.85;
+            const step   = usable / (count + 1);
+            const times  = Array.from({ length: count }, (_, i) =>
+                Math.min(2 + step * (i + 1), dur - 0.5)
+            );
+            const results = [];
+            for (let i = 0; i < times.length; i++) {
+                await new Promise(res => {
+                    video.currentTime = times[i];
+                    const onSeeked = () => {
+                        video.removeEventListener('seeked', onSeeked);
+                        const vw = video.videoWidth  || 640;
+                        const vh = video.videoHeight || 360;
+                        const w  = Math.min(vw, 640);
+                        const h  = Math.round(vh * (w / vw));
+                        const canvas = document.createElement('canvas');
+                        canvas.width = w; canvas.height = h;
+                        canvas.getContext('2d').drawImage(video, 0, 0, w, h);
+                        canvas.toBlob(blob => {
+                            if (blob) results.push({
+                                url: URL.createObjectURL(blob),
+                                blob, ts: Math.floor(times[i]), index: i,
+                            });
+                            res();
+                        }, 'image/jpeg', 0.85);
+                    };
+                    video.addEventListener('seeked', onSeeked);
+                });
+            }
+            cleanup();
+            resolve(results);
+        });
+        video.addEventListener('error', () => { cleanup(); reject(new Error('Video load error')); });
+    });
+}
+
+// ─── ThumbnailStrip ───────────────────────────────────────────────────────────
+function ThumbnailStrip({ candidates, selected, onSelect, loading, count = 5, disabled = false }) {
+    const fmt   = s  => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+    const isSel = t  => selected && (selected.filename
+        ? selected.filename === t.filename
+        : selected.index    === t.index);
+
+    if (loading) return (
+        <div className="grid grid-cols-5 gap-1.5 sm:gap-2">
+            {Array.from({ length: count }).map((_, i) => (
+                <div key={i} className="aspect-video bg-slate-700 rounded-lg animate-pulse" />
+            ))}
+        </div>
+    );
+    if (!candidates.length) return null;
+
+    return (
+        <div className="grid grid-cols-5 gap-1.5 sm:gap-2">
+            {candidates.map((thumb, i) => {
+                const sel = isSel(thumb);
+                return (
+                    <button
+                        key={thumb.filename ?? thumb.index ?? i}
+                        type="button"
+                        disabled={disabled}
+                        onClick={() => onSelect(sel ? null : thumb)}
+                        className={`relative rounded-lg overflow-hidden aspect-video border-2 transition-all focus:outline-none disabled:cursor-not-allowed ${
+                            sel
+                                ? 'border-red-500 ring-2 ring-red-500/30 scale-[1.04]'
+                                : 'border-slate-700 hover:border-slate-500 hover:scale-[1.02]'
+                        }`}
+                    >
+                        <img src={thumb.url} alt="" className="w-full h-full object-cover"
+                            onError={e => { e.target.style.display = 'none'; }} />
+                        <div className="absolute bottom-0.5 left-0.5 px-1 py-0.5 bg-black/75 text-white text-[9px] sm:text-[10px] rounded font-mono leading-none">
+                            {fmt(thumb.ts)}
+                        </div>
+                        {sel && (
+                            <div className="absolute inset-0 bg-red-500/25 flex items-center justify-center">
+                                <div className="bg-red-500 rounded-full p-1 shadow">
+                                    <Check className="w-2.5 h-2.5 text-white" strokeWidth={3} />
+                                </div>
+                            </div>
+                        )}
+                    </button>
+                );
+            })}
+        </div>
+    );
+}
+
 // ─── SeriesSearchSelect ───────────────────────────────────────────────────────
 // Searchable dropdown that replaces the plain <select> for series assignment
-function SeriesSearchSelect({ series, value, onChange, disabled }) {
+function SeriesSearchSelect({ series, value, onChange, disabled, locked = false }) {
     const [query, setQuery]       = useState("");
     const [open, setOpen]         = useState(false);
     const containerRef            = useRef(null);
@@ -82,9 +183,10 @@ function SeriesSearchSelect({ series, value, onChange, disabled }) {
                 {selected && !open ? (
                     <button
                         type="button"
-                        onClick={handleClear}
-                        disabled={disabled}
-                        className="shrink-0 p-0.5 text-slate-400 hover:text-white rounded transition"
+                        onClick={locked ? undefined : handleClear}
+                        disabled={disabled || locked}
+                        title={locked ? "Cannot remove — this is the only episode in its series" : undefined}
+                        className={`shrink-0 p-0.5 rounded transition ${locked ? "opacity-30 cursor-not-allowed text-slate-500" : "text-slate-400 hover:text-white"}`}
                     >
                         <X className="w-3.5 h-3.5" />
                     </button>
@@ -213,6 +315,15 @@ function UploadVideo({ mode = "new" }) {
     const [assignToSeries,  setAssignToSeries]  = useState(false);
     const [isDragging,      setIsDragging]      = useState(false);
 
+    // ── Thumbnail generation ──────────────────────────────────────────────────
+    const [thumbCandidates,  setThumbCandidates]  = useState([]);
+    const [selectedThumb,    setSelectedThumb]    = useState(null);
+    const [generatingThumbs, setGeneratingThumbs] = useState(false);
+    const [applyingThumb,    setApplyingThumb]    = useState(false);
+    const thumbBlobsRef = useRef([]);  // track client-side blob URLs for cleanup
+
+    const [isLastEpisode,   setIsLastEpisode]   = useState(false);
+
     const [tagInput,        setTagInput]        = useState("");
     const [studioInput,     setStudioInput]     = useState("");
     const [actorInput,      setActorInput]      = useState("");
@@ -241,6 +352,69 @@ function UploadVideo({ mode = "new" }) {
 
     useEffect(() => { fetchMetaData(); }, [fetchMetaData]);
 
+    // Cleanup client-side blob URLs on unmount
+    useEffect(() => () => { thumbBlobsRef.current.forEach(u => URL.revokeObjectURL(u)); }, []);
+
+    // Generate thumbnails client-side from the local file (new / add-episode mode)
+    const generateClientThumbs = useCallback(async (file) => {
+        setGeneratingThumbs(true);
+        setThumbCandidates([]);
+        setSelectedThumb(null);
+        thumbBlobsRef.current.forEach(u => URL.revokeObjectURL(u));
+        thumbBlobsRef.current = [];
+        try {
+            const frames = await extractFrames(file, 5);
+            thumbBlobsRef.current = frames.map(f => f.url);
+            setThumbCandidates(frames);
+            // Auto-select the middle frame
+            if (frames.length) setSelectedThumb(frames[Math.floor(frames.length / 2)]);
+        } catch (err) {
+            console.warn('Client thumbnail generation failed:', err.message);
+            // Silent fail — server will auto-generate one on upload
+        } finally {
+            setGeneratingThumbs(false);
+        }
+    }, []);
+
+    // Generate thumbnails server-side from an existing video (edit mode)
+    const handleGenerateThumbs = async () => {
+        if (!id) return;
+        setGeneratingThumbs(true);
+        setThumbCandidates([]);
+        setSelectedThumb(null);
+        try {
+            const res = await videoAPI.generateThumbnails(id, 5);
+            if (!res.success) throw new Error('Failed');
+            // Convert relative paths to full URLs
+            setThumbCandidates(res.thumbnails.map(t => ({
+                ...t,
+                url: generalAPI.thumbnailUrl(t.filename),
+            })));
+        } catch {
+            toast.error('Failed to generate thumbnails');
+        } finally {
+            setGeneratingThumbs(false);
+        }
+    };
+
+    // Apply the selected server-side thumbnail to this video (edit mode)
+    const handleApplyThumb = async () => {
+        if (!selectedThumb?.filename || !id) return;
+        setApplyingThumb(true);
+        try {
+            const res = await videoAPI.applyThumbnail(id, selectedThumb.filename, false);
+            if (!res.success) throw new Error('Failed');
+            toast.success('Thumbnail updated!');
+            setSelectedThumb(null);
+            setThumbCandidates([]);
+        } catch {
+            toast.error('Failed to apply thumbnail');
+        } finally {
+            setApplyingThumb(false);
+        }
+    };
+
+
     // ── Init for edit / add-episode ───────────────────────────────────────────
     useEffect(() => {
         if (mode === "new") return;
@@ -252,6 +426,14 @@ function UploadVideo({ mode = "new" }) {
                     setExistingVideo(video);
                     const isEpisode = !!video.seriesId;
                     setAssignToSeries(isEpisode);
+                    // Check if this is the only episode in its series
+                    if (isEpisode) {
+                        const sid = video.seriesId?._id || video.seriesId;
+                        try {
+                            const sd = await seriesAPI.getSeriesWithEpisodes(sid);
+                            setIsLastEpisode((sd.episodes || []).length <= 1);
+                        } catch (_) {}
+                    }
                     setFormData({
                         title:         video.title        || "",
                         description:   video.description  || "",
@@ -306,6 +488,7 @@ function UploadVideo({ mode = "new" }) {
         if (mode !== "edit") {
             const ext = file.name.split(".").pop().toLowerCase();
             setFormData(prev => ({ ...prev, title: file.name.replace(`.${ext}`, "") }));
+            generateClientThumbs(file);
         }
     };
 
@@ -322,6 +505,7 @@ function UploadVideo({ mode = "new" }) {
         if (mode !== "edit") {
             const ext = file.name.split(".").pop().toLowerCase();
             setFormData(prev => ({ ...prev, title: file.name.replace(`.${ext}`, "") }));
+            generateClientThumbs(file);
         }
     };
 
@@ -415,6 +599,10 @@ function UploadVideo({ mode = "new" }) {
         const data = new FormData();
         if (mode === "edit" && replaceVideo) data.append("video", videoFile);
         if (mode !== "edit")                 data.append("video", videoFile);
+        // Include selected thumbnail blob (new/add-episode mode only)
+        if (mode !== "edit" && selectedThumb?.blob) {
+            data.append("thumbnail", selectedThumb.blob, "thumbnail.jpg");
+        }
         data.append("title",       formData.title);
         data.append("description", formData.description || "");
         data.append("tags",        JSON.stringify(formData.tags));
@@ -624,9 +812,84 @@ function UploadVideo({ mode = "new" }) {
                                         </div>
                                     </div>
                                 )}
+
+                                {/* ── Thumbnail picker (new/add-episode) ─────── */}
+                                {(generatingThumbs || thumbCandidates.length > 0) && (
+                                    <div className="mt-4 pt-4 border-t border-slate-700">
+                                        <div className="flex items-center justify-between mb-2">
+                                            <p className="text-xs sm:text-sm font-medium text-slate-300 flex items-center gap-1.5">
+                                                <ImagePlay className="w-3.5 h-3.5 text-red-400" />
+                                                Choose thumbnail
+                                            </p>
+                                            {thumbCandidates.length > 0 && !generatingThumbs && (
+                                                <p className="text-xs text-slate-500">
+                                                    {selectedThumb ? 'Selected' : 'Click one to select'}
+                                                </p>
+                                            )}
+                                        </div>
+                                        <ThumbnailStrip
+                                            candidates={thumbCandidates}
+                                            selected={selectedThumb}
+                                            onSelect={setSelectedThumb}
+                                            loading={generatingThumbs}
+                                            disabled={uploading}
+                                        />
+                                    </div>
+                                )}
                             </>
                         )}
                     </div>
+
+                    {/* ── Thumbnail (edit mode) ───────────────────────────────── */}
+                    {mode === "edit" && (
+                        <div className="bg-slate-900 rounded-lg p-4 sm:p-5 border border-slate-800">
+                            <div className="flex items-center justify-between mb-3">
+                                <h2 className="text-base sm:text-lg font-semibold flex items-center gap-2">
+                                    <ImagePlay className="w-4 h-4 text-red-400" />
+                                    Thumbnail
+                                </h2>
+                                <button
+                                    type="button"
+                                    onClick={handleGenerateThumbs}
+                                    disabled={generatingThumbs || applyingThumb || uploading}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs sm:text-sm transition disabled:opacity-50"
+                                >
+                                    {generatingThumbs
+                                        ? <><Loader className="w-3.5 h-3.5 animate-spin" /> Generating…</>
+                                        : <><RefreshCw className="w-3.5 h-3.5" /> {thumbCandidates.length ? 'Regenerate' : 'Generate from video'}</>
+                                    }
+                                </button>
+                            </div>
+
+                            {(generatingThumbs || thumbCandidates.length > 0) && (
+                                <div>
+                                    <ThumbnailStrip
+                                        candidates={thumbCandidates}
+                                        selected={selectedThumb}
+                                        onSelect={setSelectedThumb}
+                                        loading={generatingThumbs}
+                                        disabled={applyingThumb || uploading}
+                                    />
+                                    {selectedThumb && !generatingThumbs && (
+                                        <button
+                                            type="button"
+                                            onClick={handleApplyThumb}
+                                            disabled={applyingThumb || uploading}
+                                            className="mt-3 w-full flex items-center justify-center gap-2 px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg text-sm font-semibold transition disabled:opacity-50"
+                                        >
+                                            {applyingThumb
+                                                ? <><Loader className="w-4 h-4 animate-spin" /> Applying…</>
+                                                : <><Check className="w-4 h-4" strokeWidth={3} /> Set as thumbnail</>
+                                            }
+                                        </button>
+                                    )}
+                                </div>
+                            )}
+                            {!generatingThumbs && thumbCandidates.length === 0 && (
+                                <p className="text-xs text-slate-500">Click "Generate from video" to pick from 5 scenes.</p>
+                            )}
+                        </div>
+                    )}
 
                     {/* ── Video Info ─────────────────────────────────────────── */}
                     <div className="bg-slate-900 rounded-lg p-4 sm:p-5 border border-slate-800">
@@ -680,8 +943,10 @@ function UploadVideo({ mode = "new" }) {
                                 <h2 className="text-base sm:text-lg font-semibold">Series Assignment</h2>
                                 <button
                                     type="button"
-                                    disabled={uploading}
+                                    disabled={uploading || isLastEpisode}
+                                    title={isLastEpisode ? "Cannot remove — this is the only episode in its series" : undefined}
                                     onClick={() => {
+                                        if (isLastEpisode) return;
                                         setAssignToSeries(v => !v);
                                         if (assignToSeries) {
                                             setFormData(prev => ({ ...prev, seriesId: null, episodeNumber: null, seasonNumber: 1 }));
@@ -689,13 +954,23 @@ function UploadVideo({ mode = "new" }) {
                                     }}
                                     className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${
                                         assignToSeries ? "bg-red-500" : "bg-slate-700"
-                                    } disabled:opacity-50`}
+                                    } ${isLastEpisode ? "opacity-50 cursor-not-allowed" : "disabled:opacity-50"}`}
                                 >
                                     <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
                                         assignToSeries ? "translate-x-6" : "translate-x-1"
                                     }`} />
                                 </button>
                             </div>
+
+                            {/* Locked warning — only episode in its series */}
+                            {isLastEpisode && (
+                                <div className="flex items-start gap-2 mt-2 p-2.5 bg-amber-500/10 border border-amber-500/30 rounded-lg">
+                                    <span className="text-amber-400 text-base leading-none mt-0.5">⚠</span>
+                                    <p className="text-xs text-amber-300 leading-relaxed">
+                                        This is the only episode in its series. You can reassign it to a different series, but it cannot be removed from all series.
+                                    </p>
+                                </div>
+                            )}
 
                             {!assignToSeries ? (
                                 <p className="text-slate-500 text-xs sm:text-sm mt-2">This video will be saved as a standalone video.</p>
@@ -721,6 +996,7 @@ function UploadVideo({ mode = "new" }) {
                                                 value={formData.seriesId || ""}
                                                 onChange={handleSeriesSelect}
                                                 disabled={uploading}
+                                                locked={isLastEpisode}
                                             />
                                         )}
                                     </div>

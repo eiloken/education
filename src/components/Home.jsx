@@ -1,5 +1,5 @@
 import React, { forwardRef, Fragment, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
-import { seriesAPI, videoAPI, activityAPI } from "../api/api";
+import { seriesAPI, activityAPI } from "../api/api";
 import toast from "react-hot-toast";
 import {
     ChevronLeft, ChevronRight, ChevronUp,
@@ -7,7 +7,6 @@ import {
     ArrowLeft, TrendingUp, Clock, Flame,
     Heart, LayoutDashboard, User as UserIcon, Crown, Users, X,
 } from "lucide-react";
-import VideoCard from "./videos/VideoCard.jsx";
 import SeriesCard from "./series/SeriesCard.jsx";
 import FilterSidebar, { DEFAULT_FILTERS, cycleItem, filtersToParams, paramsToFilters } from "./FilterSidebar";
 import Pagination from "./Pagination";
@@ -26,14 +25,13 @@ const SECTIONS = [
     { id: 'newest',        title: 'New Arrivals',        icon: Clock,       getParams: () => ({ sortBy: 'createdAt', order: 'desc' }) },
 ];
 
-const DISPLAY_MODES = [
-    { value: 'series',    label: 'Series',    icon: Layers,          adminOnly: false },
-    { value: 'videos',    label: 'Videos',    icon: Film,            adminOnly: false },
-    { value: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, adminOnly: true  },
-    { value: 'requests',  label: 'Requests',  icon: Users,           adminOnly: true  },
+// Admin-only views beyond the default series browser
+const ADMIN_MODES = [
+    { value: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { value: 'requests',  label: 'Requests',  icon: Users },
 ];
 
-// ─── Activity ping — debounced, every ~2 min on user interaction ──────────────
+// ─── Activity ping ────────────────────────────────────────────────────────────
 function useActivityPing() {
     const lastPing = useRef(0);
     useEffect(() => {
@@ -54,14 +52,14 @@ function useActivityPing() {
 }
 
 // ─── HomeSection ──────────────────────────────────────────────────────────────
-function HomeSection({ section, items, cardProps, handleShowAll, handleToggleFavoriteSeries, handleToggleFavoriteVideo }) {
+function HomeSection({ section, items, cardProps, handleShowAll, handleToggleFavoriteSeries }) {
     const rowRef = useRef(null);
     const [canLeft,  setCanLeft]  = useState(false);
     const [canRight, setCanRight] = useState(false);
     if (items.length === 0) return null;
     const Icon = section.icon;
     return (
-        <section key={section.id}>
+        <section>
             <div className="flex items-center justify-between gap-2 mb-3 min-w-0">
                 <div className="flex items-center gap-2">
                     <Icon className="w-4 h-4 sm:w-5 sm:h-5 text-red-500 shrink-0" />
@@ -85,11 +83,7 @@ function HomeSection({ section, items, cardProps, handleShowAll, handleToggleFav
             <HScrollRow ref={rowRef} itemCount={items.length} onArrowChange={({ canLeft, canRight }) => { setCanLeft(canLeft); setCanRight(canRight); }}>
                 {items.map(item => (
                     <div key={item._id} className="shrink-0 w-44 sm:w-52 self-stretch snap-start">
-                        {item._type === 'series' ? (
-                            <SeriesCard series={item} onToggleFavorite={() => handleToggleFavoriteSeries(item._id)} {...cardProps} />
-                        ) : (
-                            <VideoCard video={item} onToggleFavorite={() => handleToggleFavoriteVideo(item._id)} {...cardProps} />
-                        )}
+                        <SeriesCard series={item} onToggleFavorite={() => handleToggleFavoriteSeries(item._id)} {...cardProps} />
                     </div>
                 ))}
             </HScrollRow>
@@ -126,68 +120,43 @@ const HScrollRow = forwardRef(({ children, itemCount, onArrowChange }, ref) => {
     );
 });
 
-// ─── SearchBox — triggers search on Enter, not on every keystroke ─────────────
+// ─── SearchBox ────────────────────────────────────────────────────────────────
 const SearchBox = forwardRef(({ searchTerm, setSearchTerm, onCommit, onBlur }, ref) => {
     const searchBoxRef = useRef(null);
     useImperativeHandle(ref, () => searchBoxRef.current);
 
     const handleKeyDown = (e) => {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            onCommit?.(searchTerm);
-            searchBoxRef.current?.blur();
-        }
-        if (e.key === 'Escape') {
-            setSearchTerm('');
-            onCommit?.('');
-            searchBoxRef.current?.blur();
-        }
+        if (e.key === 'Enter') { e.preventDefault(); onCommit?.(searchTerm); searchBoxRef.current?.blur(); }
+        if (e.key === 'Escape') { setSearchTerm(''); onCommit?.(''); searchBoxRef.current?.blur(); }
     };
-
-    const handleClear = () => {
-        setSearchTerm('');
-        onCommit?.('');
-        searchBoxRef.current?.focus();
-    };
+    const handleClear = () => { setSearchTerm(''); onCommit?.(''); searchBoxRef.current?.focus(); };
 
     return (
         <div className="relative text-sm p-0.5 group">
             <Search className="w-3.5 h-3.5 absolute top-1/2 left-2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-            <input
-                ref={searchBoxRef}
-                type="text"
-                value={searchTerm}
+            <input ref={searchBoxRef} type="text" value={searchTerm}
                 onChange={e => setSearchTerm(e.target.value)}
-                onKeyDown={handleKeyDown}
-                onBlur={onBlur}
+                onKeyDown={handleKeyDown} onBlur={onBlur}
                 placeholder="Search title, actor, tag…"
-                className="pl-7 pr-16 py-2.5 bg-slate-800 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 w-full sm:w-64 transition-all"
-            />
+                className="pl-7 pr-16 py-2.5 bg-slate-800 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 w-full sm:w-64 transition-all" />
             <div className="absolute top-1/2 right-2 -translate-y-1/2 flex items-center gap-1">
                 {searchTerm && (
-                    <button
-                        onMouseDown={e => { e.preventDefault(); handleClear(); }}
-                        className="text-slate-500 hover:text-slate-300 transition p-0.5"
-                        tabIndex={-1}
-                    >
+                    <button onMouseDown={e => { e.preventDefault(); handleClear(); }}
+                        className="text-slate-500 hover:text-slate-300 transition p-0.5" tabIndex={-1}>
                         <X className="w-3 h-3" />
                     </button>
                 )}
-                <kbd className="hidden sm:inline-flex items-center px-1.5 py-0.5 text-[10px] font-mono text-slate-500 bg-slate-700 rounded border border-slate-600">
-                    ↵
-                </kbd>
+                <kbd className="hidden sm:inline-flex items-center px-1.5 py-0.5 text-[10px] font-mono text-slate-500 bg-slate-700 rounded border border-slate-600">↵</kbd>
             </div>
         </div>
     );
 });
 
-// ─── UserAvatar button ────────────────────────────────────────────────────────
+// ─── UserAvatarButton ─────────────────────────────────────────────────────────
 function UserAvatarButton({ user, isAdmin, onClick }) {
     return (
-        <button
-            onClick={onClick}
-            className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-slate-800 transition group"
-        >
+        <button onClick={onClick}
+            className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-slate-800 transition group">
             <div className="w-7 h-7 rounded-full bg-slate-700 flex items-center justify-center ring-2 ring-transparent group-hover:ring-red-500 transition text-white font-semibold text-xs uppercase">
                 {user.username?.[0] ?? <UserIcon className="w-4 h-4 text-slate-400" />}
             </div>
@@ -209,19 +178,15 @@ function Home() {
 
     const [searchParams, setSearchParams] = useSearchParams();
 
-    // ── All persistent state lives in the URL ─────────────────────────────────
     const homeMode        = searchParams.get('mode') || 'home';
     const detailSectionId = searchParams.get('section');
     const detailSection   = SECTIONS.find(s => s.id === detailSectionId) || null;
     const seriesPage      = parseInt(searchParams.get('seriesPage') || '1', 10);
-    const videosPage      = parseInt(searchParams.get('videosPage') || '1', 10);
 
-    // displayMode from URL param 'view' (default: 'series')
-    const displayModeParam = searchParams.get('view');
-    const displayMode = (DISPLAY_MODES.some(m => m.value === displayModeParam)) ? displayModeParam : 'series';
+    // Admin view mode (dashboard / requests) stored in 'view' param
+    const viewParam  = searchParams.get('view');
+    const adminView  = isAdmin && ADMIN_MODES.some(m => m.value === viewParam) ? viewParam : null;
 
-    // filters derived from URL — memoized on the raw query string so the object
-    // reference is stable between renders when nothing actually changed.
     const filtersKey = searchParams.toString();
     // eslint-disable-next-line react-hooks/exhaustive-deps
     const filters = useMemo(() => paramsToFilters(searchParams), [filtersKey]);
@@ -235,28 +200,11 @@ function Home() {
         }, { replace: false });
     }, [setSearchParams]);
 
-    const setDisplayMode = useCallback((value) => {
-        setSearchParams(prev => {
-            const next = new URLSearchParams(prev);
-            if (value && value !== 'series') next.set('view', value); else next.delete('view');
-            next.set('mode', 'home');
-            next.delete('section');
-            next.set('seriesPage', '1');
-            next.set('videosPage', '1');
-            return next;
-        }, { replace: false });
-    }, [setSearchParams]);
-
-    const [videos,          setVideos]          = useState([]);
     const [seriesList,      setSeriesList]       = useState([]);
     const [seriesLoading,   setSeriesLoading]    = useState(false);
-    const [videosLoading,   setVideosLoading]    = useState(false);
     const [seriesTotalPages,setSeriesTotalPages] = useState(1);
-    const [videosTotalPages,setVideosTotalPages] = useState(1);
 
     const [showFilters,     setShowFilters]      = useState(false);
-    // Local search term — only committed to URL on Enter; initialized from URL
-    // but NOT synced back automatically (prevents refresh resetting mode=detail)
     const [searchTerm,      setSearchTerm]       = useState(filters.search || '');
     const [showQuickSearch, setShowQuickSearch]  = useState(false);
     const quickSearchRef = useRef(null);
@@ -272,20 +220,20 @@ function Home() {
 
     const buildApiParams = useCallback((extra = {}) => ({
         limit: 20,
-        search:          filters.search         || undefined,
-        tags:            filters.tags?.join(',')           || undefined,
-        tagsExclude:     filters.tagsExclude?.join(',')    || undefined,
-        studios:         filters.studios?.join(',')        || undefined,
-        studiosExclude:  filters.studiosExclude?.join(',') || undefined,
-        actors:          filters.actors?.join(',')         || undefined,
-        actorsExclude:   filters.actorsExclude?.join(',')  || undefined,
-        characters:      filters.characters?.join(',')     || undefined,
+        search:            filters.search         || undefined,
+        tags:              filters.tags?.join(',')           || undefined,
+        tagsExclude:       filters.tagsExclude?.join(',')    || undefined,
+        studios:           filters.studios?.join(',')        || undefined,
+        studiosExclude:    filters.studiosExclude?.join(',') || undefined,
+        actors:            filters.actors?.join(',')         || undefined,
+        actorsExclude:     filters.actorsExclude?.join(',')  || undefined,
+        characters:        filters.characters?.join(',')     || undefined,
         charactersExclude: filters.charactersExclude?.join(',') || undefined,
-        year:            filters.year     || undefined,
-        favorite:        filters.favorite || undefined,
-        filterMode:      filters.filterMode,
-        sortBy:          filters.sortBy,
-        order:           filters.order,
+        year:              filters.year     || undefined,
+        favorite:          filters.favorite || undefined,
+        filterMode:        filters.filterMode,
+        sortBy:            filters.sortBy,
+        order:             filters.order,
         ...extra,
     }), [filters]);
 
@@ -295,15 +243,12 @@ function Home() {
             const results = await Promise.all(
                 SECTIONS.map(async s => {
                     const p = s.getParams();
-                    const [sd, vd] = await Promise.all([
-                        displayMode !== 'videos' ? seriesAPI.getSeries({ ...p, limit: 20 }) : Promise.resolve({ series: [] }),
-                        displayMode !== 'series' ? videoAPI.getVideos({ ...p, limit: 20 }) : Promise.resolve({ videos: [] }),
-                    ]);
-                    return { id: s.id, videos: vd.videos || [], series: sd.series || [] };
+                    const sd = await seriesAPI.getSeries({ ...p, limit: 20 });
+                    return { id: s.id, series: sd.series || [] };
                 })
             );
             const data = {};
-            results.forEach(r => { data[r.id] = { videos: r.videos, series: r.series }; });
+            results.forEach(r => { data[r.id] = r.series; });
             setSectionsData(data);
         } catch (err) {
             console.error('Fetch sections error:', err);
@@ -311,10 +256,9 @@ function Home() {
         } finally {
             setSectionsLoading(false);
         }
-    }, [displayMode]);
+    }, []);
 
     const fetchSeriesContent = useCallback(async () => {
-        if (displayMode === 'videos') { setSeriesList([]); setSeriesTotalPages(1); return; }
         setSeriesLoading(true);
         try {
             const base = homeMode === 'detail' && detailSection
@@ -325,32 +269,12 @@ function Home() {
             setSeriesTotalPages(data.totalPages || 1);
         } catch (err) { toast.error('Failed to load series'); }
         finally { setSeriesLoading(false); }
-    }, [homeMode, detailSection, seriesPage, buildApiParams, displayMode]);
-
-    const fetchVideosContent = useCallback(async () => {
-        if (displayMode === 'series') { setVideos([]); setVideosTotalPages(1); return; }
-        setVideosLoading(true);
-        try {
-            const base = homeMode === 'detail' && detailSection
-                ? { ...detailSection.getParams(), page: videosPage, limit: 20 }
-                : buildApiParams({ page: videosPage });
-            const data = await videoAPI.getVideos(base);
-            setVideos(data.videos || []);
-            setVideosTotalPages(data.totalPages || 1);
-        } catch (err) { toast.error('Failed to load videos'); }
-        finally { setVideosLoading(false); }
-    }, [homeMode, detailSection, videosPage, buildApiParams, displayMode]);
+    }, [homeMode, detailSection, seriesPage, buildApiParams]);
 
     useEffect(() => { if (homeMode === 'home') fetchSections(); }, [homeMode, fetchSections]);
     useEffect(() => { if (homeMode !== 'home') fetchSeriesContent(); }, [homeMode, fetchSeriesContent]);
-    useEffect(() => { if (homeMode !== 'home') fetchVideosContent(); }, [homeMode, fetchVideosContent]);
 
-    // Sync searchTerm from URL only when the URL's search param changes externally
-    // (e.g. user clears a filter pill). Does NOT write back to URL — that only
-    // happens on Enter via commitSearch below.
-    useEffect(() => {
-        setSearchTerm(filters.search || '');
-    }, [filters.search]);
+    useEffect(() => { setSearchTerm(filters.search || ''); }, [filters.search]);
 
     useEffect(() => {
         const handler = () => setShowScrollTop(window.scrollY > 300);
@@ -358,7 +282,6 @@ function Home() {
         return () => window.removeEventListener('scroll', handler);
     }, []);
 
-    // ── Commit search to URL (called on Enter) ────────────────────────────────
     const commitSearch = useCallback((term) => {
         const nf = { ...filters, search: term };
         const fp = filtersToParams(nf);
@@ -369,33 +292,20 @@ function Home() {
             const nextMode = hasActiveFilters(nf) ? 'filtered' : 'home';
             next.set('mode', nextMode);
             next.set('seriesPage', '1');
-            next.set('videosPage', '1');
             if (nextMode !== 'detail') next.delete('section');
             return next;
         }, { replace: false });
     }, [filters, setSearchParams, hasActiveFilters]);
 
-    // ── Toggle favorites — uses returned isFavorite from server ───────────────
-    const applyFavToggle = (id, isFavorite, listSetter, sectionKey) => {
-        listSetter(prev => prev.map(v => v._id === id ? { ...v, isFavorite } : v));
+    const applyFavToggle = (id, isFavorite) => {
+        setSeriesList(prev => prev.map(s => s._id === id ? { ...s, isFavorite } : s));
         setSectionsData(prev => {
             const next = { ...prev };
             Object.keys(next).forEach(sId => {
-                next[sId] = { ...next[sId], [sectionKey]: (next[sId][sectionKey] || []).map(v => v._id === id ? { ...v, isFavorite } : v) };
+                next[sId] = (next[sId] || []).map(s => s._id === id ? { ...s, isFavorite } : s);
             });
             return next;
         });
-    };
-
-    const handleToggleFavoriteVideo = (videoId) => {
-        if (!user) { toast.error('Sign in to add favorites'); return; }
-        toast.promise(
-            videoAPI.toggleFavorite(videoId).then(res => {
-                if (!res?.success) throw new Error();
-                applyFavToggle(videoId, res.isFavorite, setVideos, 'videos');
-            }),
-            { loading: 'Updating…', success: 'Favorite updated', error: 'Failed' }
-        );
     };
 
     const handleToggleFavoriteSeries = (seriesId) => {
@@ -403,7 +313,7 @@ function Home() {
         toast.promise(
             seriesAPI.toggleFavorite(seriesId).then(res => {
                 if (!res?.success) throw new Error();
-                applyFavToggle(seriesId, res.isFavorite, setSeriesList, 'series');
+                applyFavToggle(seriesId, res.isFavorite);
             }),
             { loading: 'Updating…', success: 'Favorite updated', error: 'Failed' }
         );
@@ -418,7 +328,6 @@ function Home() {
             next.set('mode', hasActiveFilters(newFilters) ? 'filtered' : 'home');
             next.delete('section');
             next.set('seriesPage', '1');
-            next.set('videosPage', '1');
             return next;
         }, { replace: false });
         setSearchTerm(newFilters.search || '');
@@ -441,10 +350,9 @@ function Home() {
         handleFilterChange(updated);
     };
 
-    const handleShowAll    = (section) => { updateParams({ mode: 'detail', section: section.id, seriesPage: '1', videosPage: '1' }); window.scrollTo({ top: 0, behavior: 'smooth' }); };
-    const handleBackToHome = () => {
-        const nextMode = hasActiveFilters(filters) ? 'filtered' : 'home';
-        updateParams({ mode: nextMode, section: null, seriesPage: '1', videosPage: '1' });
+    const handleShowAll = (section) => {
+        updateParams({ mode: 'detail', section: section.id, seriesPage: '1' });
+        window.scrollTo({ top: 0, behavior: 'smooth' });
     };
 
     const filterCount = (filters.tags?.length || 0) + (filters.tagsExclude?.length || 0) +
@@ -454,10 +362,7 @@ function Home() {
         (filters.year ? 1 : 0) + (filters.favorite ? 1 : 0);
 
     const hasFilters = filterCount > 0 || !!filters.search;
-    // Typed but not yet committed to URL
     const hasPendingSearch = searchTerm !== (filters.search || '');
-    const showSeries = displayMode !== 'videos';
-    const showVideos = displayMode !== 'series';
 
     const cardProps = {
         onActorClick:     v => handleChipClick('actors',     v),
@@ -474,6 +379,8 @@ function Home() {
         );
     }
 
+    const isAdminView = !!adminView;
+
     return (
         <div className="min-h-screen bg-slate-950">
             {/* ══ HEADER ═══════════════════════════════════════════════════════ */}
@@ -487,7 +394,7 @@ function Home() {
                                 setSearchParams(prev => {
                                     const next = new URLSearchParams(prev);
                                     ['q','tags','txc','stu','sxc','act','axc','chr','cxc','yr','fav','fm','sort','ord',
-                                     'mode','section','seriesPage','videosPage'].forEach(k => next.delete(k));
+                                     'mode','section','seriesPage','view'].forEach(k => next.delete(k));
                                     return next;
                                 }, { replace: false });
                             }}
@@ -496,52 +403,37 @@ function Home() {
                         </h1>
 
                         <div className="flex items-center gap-1.5 sm:gap-2 justify-end">
-                            {displayMode !== 'dashboard' && displayMode !== 'requests' && (
+                            {!isAdminView && (
                                 <>
                                     <div className="hidden sm:block">
-                                        <SearchBox
-                                            searchTerm={searchTerm}
-                                            setSearchTerm={setSearchTerm}
-                                            onCommit={commitSearch}
-                                        />
+                                        <SearchBox searchTerm={searchTerm} setSearchTerm={setSearchTerm} onCommit={commitSearch} />
                                     </div>
                                     <button
                                         onClick={() => setShowFilters(true)}
-                                        className={`flex items-center px-2 py-2 sm:px-3 rounded-lg text-white transition ${hasFilters ? 'bg-red-500 text-white' : 'hover:bg-slate-700'}`}
-                                    >
+                                        className={`flex items-center px-2 py-2 sm:px-3 rounded-lg text-white transition ${hasFilters ? 'bg-red-500 text-white' : 'hover:bg-slate-700'}`}>
                                         <Filter className="w-4 h-4 sm:w-5 sm:h-5" />
                                         <span className="hidden sm:inline text-sm">{filterCount > 0 ? ` (${filterCount})` : ''}</span>
                                     </button>
                                     <button
                                         onClick={() => { setShowQuickSearch(true); setTimeout(() => quickSearchRef.current?.focus(), 0); }}
-                                        className="px-2 py-2 sm:px-3 rounded-md text-white hover:bg-slate-700 transition block sm:hidden"
-                                    >
+                                        className="px-2 py-2 sm:px-3 rounded-md text-white hover:bg-slate-700 transition block sm:hidden">
                                         <Search className="w-4 h-4" />
                                     </button>
                                 </>
                             )}
-
-                            {/* User area */}
-                            {user && (
-                                <UserAvatarButton user={user} isAdmin={isAdmin} onClick={() => setShowProfile(true)} />
-                            )}
+                            {user && <UserAvatarButton user={user} isAdmin={isAdmin} onClick={() => setShowProfile(true)} />}
                         </div>
                     </div>
 
-                    {displayMode !== 'dashboard' && (
+                    {!isAdminView && (
                         showQuickSearch ? (
                             <div className="mt-2">
-                                <SearchBox
-                                    ref={quickSearchRef}
-                                    searchTerm={searchTerm}
-                                    setSearchTerm={setSearchTerm}
+                                <SearchBox ref={quickSearchRef} searchTerm={searchTerm} setSearchTerm={setSearchTerm}
                                     onCommit={(term) => { commitSearch(term); setShowQuickSearch(false); }}
-                                    onBlur={() => setShowQuickSearch(false)}
-                                />
+                                    onBlur={() => setShowQuickSearch(false)} />
                             </div>
                         ) : (
                             <>
-                                {/* Pending search hint */}
                                 {hasPendingSearch && searchTerm && (
                                     <div className="mt-1 text-xs text-slate-500 hidden sm:block">
                                         Press <kbd className="px-1 py-0.5 bg-slate-800 rounded border border-slate-700 font-mono">↵</kbd> to search for <span className="text-slate-300">"{searchTerm}"</span>
@@ -568,59 +460,57 @@ function Home() {
 
             {/* ══ MAIN ═════════════════════════════════════════════════════════ */}
             <main className="container mx-auto p-3 sm:p-4">
-                <div className="flex-1 flex gap-2 items-center justify-between mb-4">
-                    {/* Display mode tabs */}
-                    <div className="flex gap-1 bg-slate-900 p-1 rounded-lg shrink-0">
-                        {DISPLAY_MODES
-                            .filter(m => !m.adminOnly || isAdmin)
-                            .map(({ value, label, icon: Icon }) => (
-                                <button
-                                    key={value}
-                                    onClick={() => {
-                                        updateParams({ view: value !== 'series' ? value : null, mode: 'home', section: null, seriesPage: '1', videosPage: '1' });
-                                    }}
+                {isAdmin && homeMode !== 'detail' && homeMode !== 'filtered' && (
+                    <div className="flex-1 flex gap-2 items-center justify-between mb-4">
+                        {/* Admin mode tabs */}
+                        <div className="flex gap-1 bg-slate-900 p-1 rounded-lg shrink-0">
+                            {/* Default: browse series */}
+                            <button
+                                onClick={() => updateParams({ view: null, mode: 'home', section: null, seriesPage: '1' })}
+                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition ${
+                                    !adminView ? 'bg-red-500 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                                }`}
+                            >
+                                <Layers className="w-4 h-4" />
+                                <span className="hidden md:block text-sm">Series</span>
+                            </button>
+                            {ADMIN_MODES.map(({ value, label, icon: Icon }) => (
+                                <button key={value}
+                                    onClick={() => updateParams({ view: value })}
                                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition ${
-                                        displayMode === value ? 'bg-red-500 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                                        adminView === value ? 'bg-red-500 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800'
                                     }`}
                                 >
                                     {Icon && <Icon className="w-4 h-4" />}
                                     <span className="hidden md:block text-sm">{label}</span>
                                 </button>
                             ))}
-                    </div>
-
-                    {/* Admin-only upload buttons */}
-                    {displayMode !== 'dashboard' && displayMode !== 'requests' && isAdmin && (
-                        <div className="flex items-center gap-1.5 p-1 rounded-lg bg-slate-900">
-                            <button
-                                onClick={() => navigate('/series/create')}
-                                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition"
-                            >
-                                <Layers className="w-4 h-4" />
-                                <span className="hidden md:inline text-sm whitespace-nowrap">New Series</span>
-                            </button>
-                            <button
-                                onClick={() => navigate('/upload')}
-                                className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500 hover:bg-red-600 text-white rounded-lg transition"
-                            >
-                                <Plus className="w-4 h-4" />
-                                <span className="hidden md:inline text-sm">Upload</span>
-                            </button>
                         </div>
-                    )}
-                </div>
 
-                {displayMode === 'dashboard' ? (
+                        {/* Upload button — admin only, not in admin views */}
+                        {!isAdminView && (
+                            <div className="flex items-center gap-1.5 p-1 rounded-lg bg-slate-900">
+                                <button
+                                    onClick={() => navigate('/upload')}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500 hover:bg-red-600 text-white rounded-lg transition"
+                                >
+                                    <Plus className="w-4 h-4" />
+                                    <span className="hidden md:inline text-sm">Upload</span>
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* ── Admin views ──────────────────────────────────────────── */}
+                {adminView === 'dashboard' ? (
                     <Dashboard />
-                ) : displayMode === 'requests' ? (
+                ) : adminView === 'requests' ? (
                     <AdminRequests currentUserId={user?._id} />
                 ) : (
                     <>
                         {(homeMode === 'detail' || homeMode === 'filtered') && (
                             <div className="flex items-center gap-3 mb-6">
-                                <button onClick={handleBackToHome} className="p-2 bg-slate-800 hover:bg-slate-700 rounded-lg transition text-white">
-                                    <ArrowLeft className="w-5 h-5" />
-                                </button>
                                 {homeMode === 'detail' && detailSection && (
                                     <div className="flex items-center gap-2">
                                         <detailSection.icon className="w-5 h-5 text-red-500" />
@@ -642,11 +532,10 @@ function Home() {
                                     {SECTIONS.map(section => (
                                         <HomeSection
                                             key={section.id}
-                                            items={buildMixedItems(sectionsData[section.id] || { videos: [], series: [] }, displayMode)}
+                                            section={section}
+                                            items={sectionsData[section.id] || []}
                                             handleShowAll={handleShowAll}
                                             handleToggleFavoriteSeries={handleToggleFavoriteSeries}
-                                            handleToggleFavoriteVideo={handleToggleFavoriteVideo}
-                                            section={section}
                                             cardProps={cardProps}
                                         />
                                     ))}
@@ -656,47 +545,22 @@ function Home() {
 
                         {(homeMode === 'detail' || homeMode === 'filtered') && (
                             <>
-                                {!seriesLoading && !videosLoading && seriesList.length === 0 && videos.length === 0 ? (
+                                {!seriesLoading && seriesList.length === 0 ? (
                                     <EmptyState hasFilters={hasFilters} navigate={navigate} isAdmin={isAdmin} />
                                 ) : (
                                     <>
-                                        {showSeries && (
-                                            <section className="mb-8">
-                                                {displayMode === 'videos' && (
-                                                    <div className="flex items-center gap-2 mb-4">
-                                                        <Layers className="w-5 h-5 text-red-500" />
-                                                        <h3 className="text-lg font-bold text-white">Series</h3>
-                                                        {!seriesLoading && <span className="text-slate-500 text-sm">({seriesList.length})</span>}
-                                                    </div>
-                                                )}
-                                                {seriesLoading ? <LoadingSpinner /> : (
-                                                    <>
-                                                        <ContentGrid>
-                                                            {seriesList.map(series => (
-                                                                <SeriesCard key={series._id} series={series} onToggleFavorite={() => handleToggleFavoriteSeries(series._id)} {...cardProps} />
-                                                            ))}
-                                                        </ContentGrid>
-                                                        <Pagination currentPage={seriesPage} totalPages={seriesTotalPages}
-                                                            onPageChange={p => { updateParams({ seriesPage: String(p) }); window.scrollTo({ top: 0, behavior: 'smooth' }); }} />
-                                                    </>
-                                                )}
-                                            </section>
-                                        )}
-
-                                        {showVideos && (
-                                            <section>
-                                                {videosLoading ? <LoadingSpinner /> : (
-                                                    <>
-                                                        <ContentGrid>
-                                                            {videos.map(video => (
-                                                                <VideoCard key={video._id} video={video} onToggleFavorite={() => handleToggleFavoriteVideo(video._id)} {...cardProps} />
-                                                            ))}
-                                                        </ContentGrid>
-                                                        <Pagination currentPage={videosPage} totalPages={videosTotalPages}
-                                                            onPageChange={p => { updateParams({ videosPage: String(p) }); window.scrollTo({ top: 0, behavior: 'smooth' }); }} />
-                                                    </>
-                                                )}
-                                            </section>
+                                        {seriesLoading ? <LoadingSpinner /> : (
+                                            <>
+                                                <ContentGrid>
+                                                    {seriesList.map(series => (
+                                                        <SeriesCard key={series._id} series={series}
+                                                            onToggleFavorite={() => handleToggleFavoriteSeries(series._id)}
+                                                            {...cardProps} />
+                                                    ))}
+                                                </ContentGrid>
+                                                <Pagination currentPage={seriesPage} totalPages={seriesTotalPages}
+                                                    onPageChange={p => { updateParams({ seriesPage: String(p) }); window.scrollTo({ top: 0, behavior: 'smooth' }); }} />
+                                            </>
                                         )}
                                     </>
                                 )}
@@ -721,11 +585,6 @@ function Home() {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-function buildMixedItems({ videos = [], series = [] }, displayMode) {
-    const s = displayMode !== 'videos' ? series.map(x => ({ ...x, _type: 'series' })) : [];
-    const v = displayMode !== 'series' ? videos.map(x => ({ ...x, _type: 'video'  })) : [];
-    return [...s, ...v].slice(0, 20);
-}
 function ContentGrid({ children }) {
     return (
         <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4 items-stretch">
@@ -754,16 +613,12 @@ function EmptyState({ hasFilters, navigate, isAdmin }) {
         <div className="flex flex-col items-center justify-center h-64 text-center px-4">
             <Film className="w-20 h-20 text-slate-700 mb-4" />
             <p className="text-slate-400 text-lg mb-2">{hasFilters ? 'No results found' : 'Nothing here yet'}</p>
-            <p className="text-slate-500 mb-6 text-sm">{hasFilters ? 'Try adjusting your filters' : isAdmin ? 'Start by creating a series or uploading a video' : 'Check back later for new content'}</p>
+            <p className="text-slate-500 mb-6 text-sm">{hasFilters ? 'Try adjusting your filters' : isAdmin ? 'Start by uploading a video' : 'Check back later for new content'}</p>
             {!hasFilters && isAdmin && (
-                <div className="flex gap-3 flex-wrap justify-center">
-                    <button onClick={() => navigate('/series/create')} className="flex items-center gap-2 px-5 py-2.5 bg-slate-800 text-white rounded-lg hover:bg-slate-700 transition text-sm">
-                        <Layers className="w-4 h-4" /> Create Series
-                    </button>
-                    <button onClick={() => navigate('/upload')} className="flex items-center gap-2 px-5 py-2.5 bg-red-500 text-white rounded-lg hover:bg-red-600 transition text-sm">
-                        <Plus className="w-4 h-4" /> Upload Video
-                    </button>
-                </div>
+                <button onClick={() => navigate('/upload')}
+                    className="flex items-center gap-2 px-5 py-2.5 bg-red-500 text-white rounded-lg hover:bg-red-600 transition text-sm">
+                    <Plus className="w-4 h-4" /> Upload Video
+                </button>
             )}
         </div>
     );
