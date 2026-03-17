@@ -73,10 +73,12 @@ function cycleItem(filters, field, item) {
 }
 
 // ─── FilterSidebar ────────────────────────────────────────────────────────────
-// Filters are always applied globally across all series (metadata sourced from videos).
+// allItems from the API are now { value: string, count: number }[]
+// The internal filter arrays still store plain strings — no breaking change.
 function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters }) {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError]         = useState(null);
+    // Each is { value: string, count: number }[]
     const [tags, setTags]           = useState([]);
     const [studios, setStudios]     = useState([]);
     const [actors, setActors]       = useState([]);
@@ -97,6 +99,7 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters }) {
                 videoAPI.getActors(),
                 videoAPI.getCharacters(),
             ]);
+            // API now returns { value, count }[] — store as-is
             setTags(tagsData || []);
             setStudios(studiosData || []);
             setActors(actorsData || []);
@@ -283,6 +286,8 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters }) {
     );
 }
 
+// ─── TagSection ───────────────────────────────────────────────────────────────
+// allItems: { value: string, count: number }[]
 function TagSection({ title, field, allItems, localFilters, onCycle }) {
     const [search, setSearch]     = useState('');
     const [filtered, setFiltered] = useState(allItems);
@@ -290,7 +295,8 @@ function TagSection({ title, field, allItems, localFilters, onCycle }) {
     useEffect(() => {
         if (!search) { setFiltered(allItems); return; }
         const t = setTimeout(() => {
-            setFiltered(allItems.filter(i => i.toLowerCase().includes(search.toLowerCase())));
+            const q = search.toLowerCase();
+            setFiltered(allItems.filter(i => i.value.toLowerCase().includes(q)));
         }, 300);
         return () => clearTimeout(t);
     }, [search, allItems]);
@@ -299,8 +305,19 @@ function TagSection({ title, field, allItems, localFilters, onCycle }) {
     const excluded    = localFilters[`${field}Exclude`] || [];
     const activeCount = included.length + excluded.length;
 
+    // Total video count across all visible items in this section
+    const totalCount = allItems.reduce((s, i) => s + (i.count || 0), 0);
+
     return (
-        <Section title={`${title}${activeCount > 0 ? ` (${activeCount})` : ''}`}>
+        <Section title={
+            <span className="flex items-center gap-2">
+                {title}
+                {activeCount > 0 && (
+                    <span className="text-xs font-normal text-slate-400">({activeCount} selected)</span>
+                )}
+                <span className="ml-auto text-xs font-normal text-slate-500">{totalCount} videos</span>
+            </span>
+        }>
             {allItems.length > 6 && (
                 <input type="text" value={search} onChange={e => setSearch(e.target.value)}
                     placeholder={`Filter ${title.toLowerCase()}…`}
@@ -311,17 +328,31 @@ function TagSection({ title, field, allItems, localFilters, onCycle }) {
                     <p className="text-slate-500 text-xs">No results</p>
                 ) : (
                     filtered.map(item => {
-                        const isIncluded = included.includes(item);
-                        const isExcluded = excluded.includes(item);
+                        const isIncluded = included.includes(item.value);
+                        const isExcluded = excluded.includes(item.value);
                         return (
-                            <button key={item} onClick={() => onCycle(field, item)}
-                                className={`px-2.5 py-1 rounded-full text-xs font-medium transition border-2 ${
-                                    isIncluded ? 'bg-green-500/20 text-green-300 border-dashed border-green-400'
-                                    : isExcluded ? 'bg-red-500/20 text-red-300 border-red-500 line-through'
-                                    : 'bg-slate-700 text-slate-300 border-transparent hover:bg-slate-600'
+                            <button
+                                key={item.value}
+                                onClick={() => onCycle(field, item.value)}
+                                className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition border-2 ${
+                                    isIncluded
+                                        ? 'bg-green-500/20 text-green-300 border-dashed border-green-400'
+                                        : isExcluded
+                                            ? 'bg-red-500/20 text-red-300 border-red-500 line-through'
+                                            : 'bg-slate-700 text-slate-300 border-transparent hover:bg-slate-600'
                                 }`}
-                                title={isIncluded ? 'Click to exclude' : isExcluded ? 'Click to clear' : 'Click to include'}>
-                                {isIncluded && '✓ '}{isExcluded && '✗ '}{item}
+                                title={isIncluded ? 'Click to exclude' : isExcluded ? 'Click to clear' : 'Click to include'}
+                            >
+                                {isIncluded && <span>✓ </span>}{isExcluded && <span>✗ </span>}
+                                {item.value}
+                                {/* Count badge */}
+                                <span className={`ml-0.5 px-1 py-0 rounded text-[10px] leading-4 font-mono ${
+                                    isIncluded ? 'bg-green-500/30 text-green-200'
+                                    : isExcluded ? 'bg-red-500/30 text-red-200'
+                                    : 'bg-slate-600 text-slate-400'
+                                }`}>
+                                    {item.count}
+                                </span>
                             </button>
                         );
                     })
@@ -334,7 +365,14 @@ function TagSection({ title, field, allItems, localFilters, onCycle }) {
 function Section({ title, children }) {
     return (
         <div className="mb-5">
-            {title && <label className="block text-white text-sm font-semibold mb-2">{title}</label>}
+            {title && (
+                <div className="flex items-center justify-between mb-2">
+                    {typeof title === 'string'
+                        ? <label className="block text-white text-sm font-semibold">{title}</label>
+                        : <div className="flex items-center w-full text-white text-sm font-semibold">{title}</div>
+                    }
+                </div>
+            )}
             {children}
         </div>
     );

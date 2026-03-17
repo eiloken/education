@@ -407,10 +407,10 @@ function Home() {
     const isAdminView = !!adminView;
 
     return (
-        <div className="min-h-screen bg-slate-950">
+        <div className="min-h-screen bg-slate-950 px-4 sm:px-6">
             {/* ══ HEADER ═══════════════════════════════════════════════════════ */}
             <header className="sticky top-0 z-30 bg-slate-950/95 backdrop-blur-sm border-b border-slate-800">
-                <div className="container mx-auto px-3 sm:px-4 pt-3 pb-2">
+                <div className="mx-auto px-3 sm:px-4 pt-3 pb-2">
                     <div className="flex items-center justify-between gap-2">
                         <h1
                             className="text-2xl sm:text-3xl font-bold text-red-500 cursor-pointer hover:text-red-400 transition shrink-0"
@@ -484,7 +484,7 @@ function Home() {
             </header>
 
             {/* ══ MAIN ═════════════════════════════════════════════════════════ */}
-            <main className="container mx-auto p-3 sm:p-4">
+            <main className="mx-auto p-3 sm:p-4">
                 {isAdmin && homeMode !== 'detail' && homeMode !== 'filtered' && (
                     <div className="flex-1 flex gap-2 items-center justify-between mb-4">
                         {/* Admin mode tabs */}

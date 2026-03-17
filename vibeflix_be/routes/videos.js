@@ -110,13 +110,9 @@ function applySmartSearch(query, search) {
 
 function buildFilterQuery(params, userFavoriteIds = null) {
     const {
-        tags, tagsExclude,
-        studios, studiosExclude,
-        actors, actorsExclude,
-        characters, charactersExclude,
-        year, favorite, search,
-        filterMode = 'or',
-        dateFrom,
+        tags, tagsExclude, studios, studiosExclude,
+        actors, actorsExclude, characters, charactersExclude,
+        year, favorite, search, filterMode = 'or', dateFrom,
     } = params;
 
     const op    = filterMode === 'and' ? '$all' : '$in';
@@ -124,8 +120,8 @@ function buildFilterQuery(params, userFavoriteIds = null) {
 
     const applyField = (f, inc, exc) => {
         const c = {};
-        if (inc) c[op]      = inc.split(',').filter(Boolean);
-        if (exc) c['$nin']  = exc.split(',').filter(Boolean);
+        if (inc) c[op]     = inc.split(',').filter(Boolean);
+        if (exc) c['$nin'] = exc.split(',').filter(Boolean);
         if (Object.keys(c).length) query[f] = c;
     };
 
@@ -218,15 +214,21 @@ router.get('/:id', async (req, res) => {
 
 // ─── POST /api/videos/upload  [admin only] ────────────────────────────────────
 // All videos belong to a series. If no seriesId is provided, a new series is
-// auto-created using the video's title, metadata, and thumbnail.
+// auto-created. `seriesTitle` sets the series name; falls back to video title.
 router.post('/upload', requireAdmin, uploadWithThumb.fields([{name:'video',maxCount:1},{name:'thumbnail',maxCount:1}]), async (req, res) => {
+    let videoFile;
     try {
         if (!req.files?.video?.[0]) return res.status(400).json({ error: 'No video file uploaded' });
 
-        const videoFile = req.files.video[0];
+        videoFile = req.files.video[0];
         const thumbFile = req.files.thumbnail?.[0];
 
-        const { title, description, tags, studios, actors, characters, year, seriesId, episodeNumber, seasonNumber } = req.body;
+        // ── Accept both a separate seriesTitle and the episode title ──────────
+        const {
+            title, seriesTitle,
+            description, tags, studios, actors, characters, year,
+            seriesId, episodeNumber, seasonNumber,
+        } = req.body;
 
         const videoPath = path.join(uploadDir, videoFile.filename);
 
@@ -249,22 +251,24 @@ router.post('/upload', requireAdmin, uploadWithThumb.fields([{name:'video',maxCo
         const videoTitle       = title?.trim() || videoFile.originalname.replace(/\.[^.]+$/, '');
 
         // ── Resolve series: use provided one, or auto-create ─────────────────
-        let resolvedSeriesId = seriesId || null;
+        let resolvedSeriesId      = seriesId || null;
         let resolvedEpisodeNumber = episodeNumber ? parseInt(episodeNumber) : null;
         let resolvedSeasonNumber  = seasonNumber  ? parseInt(seasonNumber)  : null;
-        let autoCreatedSeries = null;
+        let autoCreatedSeries     = null;
 
         if (!resolvedSeriesId) {
-            // Auto-create a series named after the video; inherit video thumbnail
+            // seriesTitle is the user-supplied name for the new series; falls back to videoTitle
+            const seriesTitleValue = seriesTitle?.trim() || videoTitle;
+
             autoCreatedSeries = await new Series({
-                title:        videoTitle,
+                title:        seriesTitleValue,
                 description:  description?.trim() || '',
                 tags:         parsedTags,
                 studios:      parsedStudios,
                 actors:       parsedActors,
                 characters:   parsedCharacters,
                 year:         parsedYear,
-                thumbnailPath: thumbnailFileName,  // share the same thumbnail
+                thumbnailPath: thumbnailFileName,
             }).save();
             resolvedSeriesId      = autoCreatedSeries._id;
             resolvedEpisodeNumber = 1;
@@ -325,19 +329,54 @@ router.post('/upload', requireAdmin, uploadWithThumb.fields([{name:'video',maxCo
 // ─── PUT /api/videos/:id  [admin only] ───────────────────────────────────────
 router.put('/:id', requireAdmin, async (req, res) => {
     try {
-        const oldVideo = await Video.findById(req.params.id);
-        if (!oldVideo) return res.status(404).json({ error: 'Video not found' });
+        const video = await Video.findById(req.params.id);
+        if (!video) return res.status(404).json({ error: 'Video not found' });
 
-        const video = await Video.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
+        const { title, description, tags, studios, actors, characters, year, seriesId, episodeNumber, seasonNumber } = req.body;
+        const updateData = {};
 
-        if (oldVideo.seriesId) await rebuildSeriesMetadata(oldVideo.seriesId);
-        if (video.seriesId && String(video.seriesId) !== String(oldVideo.seriesId)) {
-            await rebuildSeriesMetadata(video.seriesId);
-        }
+        if (title       !== undefined) updateData.title       = title.trim();
+        if (description !== undefined) updateData.description = description.trim();
+        if (tags)        updateData.tags       = JSON.parse(tags);
+        if (studios)     updateData.studios    = JSON.parse(studios);
+        if (actors)      updateData.actors     = JSON.parse(actors);
+        if (characters)  updateData.characters = JSON.parse(characters);
+        if (year        !== undefined) updateData.year          = year ? parseInt(year) : null;
+        if (seriesId    !== undefined) updateData.seriesId      = seriesId || null;
+        if (episodeNumber !== undefined) updateData.episodeNumber = episodeNumber ? parseInt(episodeNumber) : null;
+        if (seasonNumber  !== undefined) updateData.seasonNumber  = seasonNumber  ? parseInt(seasonNumber)  : null;
 
-        res.json({ success: true, message: 'Video updated', video });
+        const updated = await Video.findByIdAndUpdate(req.params.id, updateData, { new: true, runValidators: true });
+        await rebuildSeriesMetadata(updated.seriesId);
+        res.json({ success: true, message: 'Video updated', video: updated });
     } catch (error) {
-        res.status(400).json({ error: error.message });
+        console.error('Error updating video:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ─── PUT /api/videos/:id/replace-video  [admin only] ─────────────────────────
+router.put('/:id/replace-video', requireAdmin, upload.single('video'), async (req, res) => {
+    try {
+        const video = await Video.findById(req.params.id);
+        if (!video) return res.status(404).json({ error: 'Video not found' });
+        if (!req.file) return res.status(400).json({ error: 'No video file uploaded' });
+
+        const oldPath = path.join(uploadDir, video.videoPath);
+        if (fs.existsSync(oldPath)) { try { fs.unlinkSync(oldPath); } catch (_) {} }
+
+        const videoPath = path.join(uploadDir, req.file.filename);
+        const duration  = await getVideoDuration(videoPath);
+        const stats     = fs.statSync(videoPath);
+
+        const updated = await Video.findByIdAndUpdate(req.params.id,
+            { videoPath: req.file.filename, duration, fileSize: stats.size },
+            { new: true }
+        );
+        res.json({ success: true, message: 'Video replaced', video: updated });
+    } catch (error) {
+        if (req.file) { try { fs.unlinkSync(req.file.path); } catch (_) {} }
+        res.status(500).json({ error: error.message });
     }
 });
 
@@ -357,33 +396,34 @@ router.patch('/:id/favorite', authenticate, async (req, res) => {
 });
 
 // ─── DELETE /api/videos/:id  [admin only] ────────────────────────────────────
-// If deleting the last episode of a series, also deletes the series.
 router.delete('/:id', requireAdmin, async (req, res) => {
     try {
         const video = await Video.findById(req.params.id);
         if (!video) return res.status(404).json({ error: 'Video not found' });
 
+        const videoPath = path.join(uploadDir, video.videoPath);
+        if (fs.existsSync(videoPath)) { try { fs.unlinkSync(videoPath); } catch (_) {} }
+
+        if (video.thumbnailPath) {
+            const thumbPath = path.join(thumbnailDir, video.thumbnailPath);
+            if (fs.existsSync(thumbPath)) { try { fs.unlinkSync(thumbPath); } catch (_) {} }
+        }
+
         const seriesId = video.seriesId;
-        try { const p = path.join(uploadDir, video.videoPath); if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {}
-        try { if (video.thumbnailPath) { const p = path.join(thumbnailDir, video.thumbnailPath); if (fs.existsSync(p)) fs.unlinkSync(p); } } catch (_) {}
+        await Favorite.deleteMany({ itemId: video._id, itemType: 'video' });
+        await Video.findByIdAndDelete(req.params.id);
 
-        await Promise.all([
-            Video.findByIdAndDelete(req.params.id),
-            Favorite.deleteMany({ itemId: req.params.id, itemType: 'video' }),
-        ]);
-
+        // Rebuild series metadata; delete series if no episodes remain
         if (seriesId) {
-            const remainingEpisodes = await Video.countDocuments({ seriesId });
-            if (remainingEpisodes === 0) {
-                // Clean up the now-empty series
+            const remaining = await Video.countDocuments({ seriesId });
+            if (remaining === 0) {
                 const series = await Series.findById(seriesId);
                 if (series?.thumbnailPath) {
-                    try { const p = path.join(thumbnailDir, series.thumbnailPath); if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {}
+                    const p = path.join(thumbnailDir, series.thumbnailPath);
+                    if (fs.existsSync(p)) { try { fs.unlinkSync(p); } catch (_) {} }
                 }
-                await Promise.all([
-                    Series.findByIdAndDelete(seriesId),
-                    Favorite.deleteMany({ itemId: seriesId, itemType: 'series' }),
-                ]);
+                await Favorite.deleteMany({ itemId: seriesId, itemType: 'series' });
+                await Series.findByIdAndDelete(seriesId);
             } else {
                 await rebuildSeriesMetadata(seriesId);
             }
@@ -395,133 +435,91 @@ router.delete('/:id', requireAdmin, async (req, res) => {
     }
 });
 
-// ─── PUT /api/videos/:id/replace-video  [admin only] ─────────────────────────
-router.put('/:id/replace-video', requireAdmin, upload.single('video'), async (req, res) => {
-    try {
-        if (!req.file) return res.status(400).json({ error: 'No video file uploaded' });
-
-        const video = await Video.findById(req.params.id);
-        if (!video) { fs.unlinkSync(req.file.path); return res.status(404).json({ error: 'Video not found' }); }
-
-        try { const old = path.join(uploadDir, video.videoPath); if (fs.existsSync(old)) fs.unlinkSync(old); } catch (_) {}
-
-        const newThumb = `THUMB-${uuidv4()}.jpg`;
-        await generateThumbnail(path.join(uploadDir, req.file.filename), path.join(thumbnailDir, newThumb));
-        const duration = await getVideoDuration(path.join(uploadDir, req.file.filename));
-        const stats    = fs.statSync(path.join(uploadDir, req.file.filename));
-
-        const { title, description, tags, studios, actors, characters, year, seriesId, episodeNumber, seasonNumber } = req.body;
-        const updateData = { videoPath: req.file.filename, thumbnailPath: newThumb, duration, fileSize: stats.size };
-        if (title !== undefined)       updateData.title         = title.trim();
-        if (description !== undefined) updateData.description   = description.trim();
-        if (tags)        updateData.tags         = JSON.parse(tags);
-        if (studios)     updateData.studios      = JSON.parse(studios);
-        if (actors)      updateData.actors       = JSON.parse(actors);
-        if (characters)  updateData.characters   = JSON.parse(characters);
-        if (year !== undefined)        updateData.year          = year ? parseInt(year) : null;
-        if (seriesId !== undefined)    updateData.seriesId      = seriesId || null;
-        if (episodeNumber) updateData.episodeNumber = parseInt(episodeNumber);
-        if (seasonNumber)  updateData.seasonNumber  = parseInt(seasonNumber);
-
-        const updated = await Video.findByIdAndUpdate(req.params.id, updateData, { new: true, runValidators: true });
-        if (updated.seriesId) await rebuildSeriesMetadata(updated.seriesId);
-
-        res.json({ success: true, message: 'Video replaced', video: updated });
-    } catch (error) {
-        if (req.file) { try { fs.unlinkSync(req.file.path); } catch (_) {} }
-        res.status(500).json({ error: error.message });
-    }
-});
-
 // ─── GET /api/videos/:id/stream ──────────────────────────────────────────────
 router.get('/:id/stream', async (req, res) => {
     try {
         const video = await Video.findById(req.params.id);
         if (!video) return res.status(404).json({ error: 'Video not found' });
 
-        let videoPath = video.videoPath;
-        const { quality } = req.query;
-        if (quality && video.resolutions?.length) {
-            const r = video.resolutions.find(r => r.quality === quality);
-            if (r) videoPath = r.path;
-        }
+        const videoPath = path.join(uploadDir, video.videoPath);
+        if (!fs.existsSync(videoPath)) return res.status(404).json({ error: 'Video file not found' });
 
-        const videoFilePath = path.join(uploadDir, videoPath);
-        if (!fs.existsSync(videoFilePath)) return res.status(404).json({ error: 'Video file not found' });
-
-        const stat     = fs.statSync(videoFilePath);
+        const stat    = fs.statSync(videoPath);
         const fileSize = stat.size;
-        const range    = req.headers.range;
+        const range   = req.headers.range;
 
         if (range) {
-            const parts = range.replace(/bytes=/, '').split('-');
-            const start = parseInt(parts[0], 10);
-            const end   = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
-            const chunk = end - start + 1;
-            res.writeHead(206, {
+            const parts  = range.replace(/bytes=/, '').split('-');
+            const start  = parseInt(parts[0], 10);
+            const end    = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+            const chunkSize = end - start + 1;
+            const file   = fs.createReadStream(videoPath, { start, end });
+            const head   = {
                 'Content-Range':  `bytes ${start}-${end}/${fileSize}`,
                 'Accept-Ranges':  'bytes',
-                'Content-Length': chunk,
+                'Content-Length': chunkSize,
                 'Content-Type':   'video/mp4',
-            });
-            fs.createReadStream(videoFilePath, { start, end }).pipe(res);
+            };
+            res.writeHead(206, head);
+            file.pipe(res);
         } else {
-            res.writeHead(200, { 'Content-Length': fileSize, 'Content-Type': 'video/mp4' });
-            fs.createReadStream(videoFilePath).pipe(res);
+            const head = { 'Content-Length': fileSize, 'Content-Type': 'video/mp4' };
+            res.writeHead(200, head);
+            fs.createReadStream(videoPath).pipe(res);
         }
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
 
-
-// ─── POST /api/videos/:id/thumbnails/generate  [admin only] ──────────────────
-// Generates 5 candidate thumbnails at evenly-spaced positions across the video.
+// ─── POST /api/videos/:id/thumbnails/generate ────────────────────────────────
 router.post('/:id/thumbnails/generate', requireAdmin, async (req, res) => {
     try {
         const video = await Video.findById(req.params.id);
         if (!video) return res.status(404).json({ error: 'Video not found' });
 
-        const videoFilePath = path.join(uploadDir, video.videoPath);
-        if (!fs.existsSync(videoFilePath))
-            return res.status(404).json({ error: 'Video file not found on disk' });
+        const videoPath = path.join(uploadDir, video.videoPath);
+        if (!fs.existsSync(videoPath)) return res.status(404).json({ error: 'Video file not found' });
 
-        const count    = 5;
-        const duration = await getVideoDuration(videoFilePath);
-        if (!duration || duration < 1)
-            return res.status(400).json({ error: 'Could not determine video duration' });
+        const count    = Math.min(parseInt(req.body.count) || 5, 10);
+        const duration = await getVideoDuration(videoPath);
+        const prefix   = `THUMB-GEN-${video._id}-`;
+        const thumbnails = [];
 
-        // Purge any leftover temp thumbnails from a previous generate call
-        const prefix = `TEMP-THUMB-${video._id}-`;
-        try {
-            fs.readdirSync(thumbnailDir)
-                .filter(f => f.startsWith(prefix))
-                .forEach(f => { try { fs.unlinkSync(path.join(thumbnailDir, f)); } catch (_) {} });
-        } catch (_) {}
+        // Pick `count` random timestamps spread across the usable range, then sort
+        // them so the strip appears in chronological order for the user.
+        const rangeStart = duration > 10 ? 2 : 0;
+        const rangeEnd   = duration > 10 ? duration - 4 : duration * 0.9;
+        const usable     = Math.max(rangeEnd - rangeStart, 1);
 
-        const usable     = duration > 10 ? duration - 4 : duration * 0.85;
-        const step       = usable / (count + 1);
-        const timestamps = Array.from({ length: count }, (_, i) => 2 + step * (i + 1));
+        const timesSet = new Set();
+        let attempts = 0;
+        while (timesSet.size < count && attempts < count * 20) {
+            timesSet.add(Math.floor(rangeStart + Math.random() * usable));
+            attempts++;
+        }
+        // Pad with evenly-spaced fallbacks if the range is too short for unique randoms
+        while (timesSet.size < count) {
+            timesSet.add(Math.floor((usable / (count + 1)) * (timesSet.size + 1) + rangeStart));
+        }
+        const sortedTimes = [...timesSet].sort((a, b) => a - b);
 
-        const results = await Promise.all(timestamps.map((ts, i) =>
-            new Promise((resolve) => {
-                const filename = `${prefix}${i}.jpg`;
-                const outPath  = path.join(thumbnailDir, filename);
-                Ffmpeg(videoFilePath)
-                    .seekInput(Math.min(Math.floor(ts), Math.floor(duration) - 1))
-                    .frames(1)
-                    .outputOptions('-vf', 'scale=640:-1')
+        for (let i = 0; i < sortedTimes.length; i++) {
+            const seconds  = sortedTimes[i];
+            const filename = `${prefix}${i}.jpg`;
+            const outPath  = path.join(thumbnailDir, filename);
+            await new Promise((resolve) => {
+                Ffmpeg(videoPath)
+                    .seekInput(seconds).frames(1)
+                    .outputOptions("-vf", "scale=320:-1")
                     .output(outPath)
-                    .on('end',   () => resolve({ index: i, filename, ts: Math.floor(ts) }))
-                    .on('error', () => resolve(null))
+                    .on('end', resolve)
+                    .on('error', resolve)
                     .run();
-            })
-        ));
-
-        const thumbnails = results
-            .filter(Boolean)
-            .sort((a, b) => a.index - b.index)
-            .map(t => ({ filename: t.filename, ts: t.ts }));
+            });
+            // Push an object {filename, ts} so the frontend can display timestamps
+            if (fs.existsSync(outPath)) thumbnails.push({ filename, ts: seconds });
+        }
 
         res.json({ success: true, thumbnails });
     } catch (error) {
@@ -529,14 +527,12 @@ router.post('/:id/thumbnails/generate', requireAdmin, async (req, res) => {
     }
 });
 
-// ─── POST /api/videos/:id/thumbnails/apply  [admin only] ─────────────────────
-// Promotes a temp thumbnail to the video's official thumbnail (no series sync).
+// ─── POST /api/videos/:id/thumbnails/apply ───────────────────────────────────
 router.post('/:id/thumbnails/apply', requireAdmin, async (req, res) => {
     try {
-        const { filename } = req.body;
-        if (!filename) return res.status(400).json({ error: 'filename is required' });
+        const { filename, syncSeries } = req.body;
+        const prefix = `THUMB-GEN-${req.params.id}-`;
 
-        const prefix = `TEMP-THUMB-${req.params.id}-`;
         if (!filename.startsWith(prefix))
             return res.status(400).json({ error: 'Invalid thumbnail filename' });
 
@@ -562,16 +558,29 @@ router.post('/:id/thumbnails/apply', requireAdmin, async (req, res) => {
 
         const updated = await Video.findByIdAndUpdate(req.params.id, { thumbnailPath: newFilename }, { new: true });
 
+        if (syncSeries && video.seriesId) {
+            await Series.findByIdAndUpdate(video.seriesId, { thumbnailPath: newFilename });
+        }
+
         res.json({ success: true, thumbnailPath: newFilename, video: updated });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
 
-// ─── Metadata endpoints ───────────────────────────────────────────────────────
-router.get('/metadata/tags',       async (req, res) => { try { res.json((await Video.distinct('tags')).filter(Boolean).sort());       } catch (e) { res.status(500).json({ error: e.message }); } });
-router.get('/metadata/studios',    async (req, res) => { try { res.json((await Video.distinct('studios')).filter(Boolean).sort());    } catch (e) { res.status(500).json({ error: e.message }); } });
-router.get('/metadata/actors',     async (req, res) => { try { res.json((await Video.distinct('actors')).filter(Boolean).sort());     } catch (e) { res.status(500).json({ error: e.message }); } });
-router.get('/metadata/characters', async (req, res) => { try { res.json((await Video.distinct('characters')).filter(Boolean).sort()); } catch (e) { res.status(500).json({ error: e.message }); } });
+// ─── Metadata endpoints ── return { value, count }[] for filter sidebar ───────
+async function metaAgg(field) {
+    return Video.aggregate([
+        { $unwind: `$${field}` },
+        { $match:  { [field]: { $nin: [null, ''] } } },
+        { $group:  { _id: `$${field}`, count: { $sum: 1 } } },
+        { $sort:   { _id: 1 } },
+    ]);
+}
+
+router.get('/metadata/tags',       async (req, res) => { try { res.json((await metaAgg('tags')).map(r => ({ value: r._id, count: r.count })));       } catch (e) { res.status(500).json({ error: e.message }); } });
+router.get('/metadata/studios',    async (req, res) => { try { res.json((await metaAgg('studios')).map(r => ({ value: r._id, count: r.count })));    } catch (e) { res.status(500).json({ error: e.message }); } });
+router.get('/metadata/actors',     async (req, res) => { try { res.json((await metaAgg('actors')).map(r => ({ value: r._id, count: r.count })));     } catch (e) { res.status(500).json({ error: e.message }); } });
+router.get('/metadata/characters', async (req, res) => { try { res.json((await metaAgg('characters')).map(r => ({ value: r._id, count: r.count }))); } catch (e) { res.status(500).json({ error: e.message }); } });
 
 export default router;

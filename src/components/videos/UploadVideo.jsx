@@ -3,9 +3,11 @@ import { useNavigate, useParams } from "react-router-dom";
 import { generalAPI, seriesAPI, videoAPI } from "../../api/api";
 import toast from "react-hot-toast";
 import {
-    ArrowLeft, Check, ChevronDown, Film, ImagePlay, Layers, Loader,
-    Plus, RefreshCw, Search, Upload, X,
+    ArrowLeft, Check, ChevronDown, Film, ImagePlay, Layers,
+    Loader2,
+    Plus, RefreshCw, Search, Sparkles, Upload, X,
 } from "lucide-react";
+import { ThumbnailStrip } from "../series/CreateSeries";
 
 // ─── Client-side frame extractor (works before upload) ───────────────────────
 async function extractFrames(file, count = 5) {
@@ -55,57 +57,6 @@ async function extractFrames(file, count = 5) {
         });
         video.addEventListener('error', () => { cleanup(); reject(new Error('Video load error')); });
     });
-}
-
-// ─── ThumbnailStrip ───────────────────────────────────────────────────────────
-function ThumbnailStrip({ candidates, selected, onSelect, loading, count = 5, disabled = false }) {
-    const fmt   = s  => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-    const isSel = t  => selected && (selected.filename
-        ? selected.filename === t.filename
-        : selected.index    === t.index);
-
-    if (loading) return (
-        <div className="grid grid-cols-5 gap-1.5 sm:gap-2">
-            {Array.from({ length: count }).map((_, i) => (
-                <div key={i} className="aspect-video bg-slate-700 rounded-lg animate-pulse" />
-            ))}
-        </div>
-    );
-    if (!candidates.length) return null;
-
-    return (
-        <div className="grid grid-cols-5 gap-1.5 sm:gap-2">
-            {candidates.map((thumb, i) => {
-                const sel = isSel(thumb);
-                return (
-                    <button
-                        key={thumb.filename ?? thumb.index ?? i}
-                        type="button"
-                        disabled={disabled}
-                        onClick={() => onSelect(sel ? null : thumb)}
-                        className={`relative rounded-lg overflow-hidden aspect-video border-2 transition-all focus:outline-none disabled:cursor-not-allowed ${
-                            sel
-                                ? 'border-red-500 ring-2 ring-red-500/30 scale-[1.04]'
-                                : 'border-slate-700 hover:border-slate-500 hover:scale-[1.02]'
-                        }`}
-                    >
-                        <img src={thumb.url} alt="" className="w-full h-full object-cover"
-                            onError={e => { e.target.style.display = 'none'; }} />
-                        <div className="absolute bottom-0.5 left-0.5 px-1 py-0.5 bg-black/75 text-white text-[9px] sm:text-[10px] rounded font-mono leading-none">
-                            {fmt(thumb.ts)}
-                        </div>
-                        {sel && (
-                            <div className="absolute inset-0 bg-red-500/25 flex items-center justify-center">
-                                <div className="bg-red-500 rounded-full p-1 shadow">
-                                    <Check className="w-2.5 h-2.5 text-white" strokeWidth={3} />
-                                </div>
-                            </div>
-                        )}
-                    </button>
-                );
-            })}
-        </div>
-    );
 }
 
 // ─── SeriesSearchSelect ───────────────────────────────────────────────────────
@@ -324,6 +275,10 @@ function UploadVideo({ mode = "new" }) {
 
     const [isLastEpisode,   setIsLastEpisode]   = useState(false);
 
+    // ── Series title (new-mode only: auto-created series name) ───────────────
+    const [seriesTitle,       setSeriesTitle]       = useState("");
+    const [seriesTitleEdited, setSeriesTitleEdited] = useState(false);
+
     const [tagInput,        setTagInput]        = useState("");
     const [studioInput,     setStudioInput]     = useState("");
     const [actorInput,      setActorInput]      = useState("");
@@ -343,9 +298,11 @@ function UploadVideo({ mode = "new" }) {
                 videoAPI.getActors(),
                 seriesAPI.getSeries({ limit: 1000 }),
             ]);
-            setAvailableTags(tags);
-            setAvailableStudios(studios);
-            setAvailableActors(actors);
+            // API now returns { value, count }[] — extract plain string values
+            const vals = arr => (arr || []).map(x => (typeof x === "string" ? x : x.value)).filter(Boolean);
+            setAvailableTags(vals(tags));
+            setAvailableStudios(vals(studios));
+            setAvailableActors(vals(actors));
             setAvailableSeries(seriesData.series || []);
         } catch (_) {}
     }, []);
@@ -487,7 +444,9 @@ function UploadVideo({ mode = "new" }) {
         setVideoFile(file);
         if (mode !== "edit") {
             const ext = file.name.split(".").pop().toLowerCase();
-            setFormData(prev => ({ ...prev, title: file.name.replace(`.${ext}`, "") }));
+            const baseName = file.name.replace(`.${ext}`, "");
+            setFormData(prev => ({ ...prev, title: baseName }));
+            if (!seriesTitleEdited) setSeriesTitle(baseName);
             generateClientThumbs(file);
         }
     };
@@ -504,7 +463,9 @@ function UploadVideo({ mode = "new" }) {
         setVideoFile(file);
         if (mode !== "edit") {
             const ext = file.name.split(".").pop().toLowerCase();
-            setFormData(prev => ({ ...prev, title: file.name.replace(`.${ext}`, "") }));
+            const baseName = file.name.replace(`.${ext}`, "");
+            setFormData(prev => ({ ...prev, title: baseName }));
+            if (!seriesTitleEdited) setSeriesTitle(baseName);
             generateClientThumbs(file);
         }
     };
@@ -578,10 +539,10 @@ function UploadVideo({ mode = "new" }) {
             const meta = {
                 title:         formData.title,
                 description:   formData.description,
-                tags:          formData.tags,
-                studios:       formData.studios,
-                actors:        formData.actors,
-                characters:    formData.characters,
+                tags:          JSON.stringify(formData.tags),
+                studios:       JSON.stringify(formData.studios),
+                actors:        JSON.stringify(formData.actors),
+                characters:    JSON.stringify(formData.characters),
                 year:          formData.year ? parseInt(formData.year) : null,
                 seriesId:      assignToSeries ? (formData.seriesId || null) : null,
                 episodeNumber: assignToSeries ? (formData.episodeNumber ? parseInt(formData.episodeNumber) : null) : null,
@@ -619,6 +580,9 @@ function UploadVideo({ mode = "new" }) {
             data.append("seriesId", targetSeriesId);
             if (formData.episodeNumber) data.append("episodeNumber", formData.episodeNumber);
             data.append("seasonNumber", formData.seasonNumber || 1);
+        } else if (mode === "new" && seriesTitle.trim()) {
+            // Pass the user-supplied series name for the auto-created series
+            data.append("seriesTitle", seriesTitle.trim());
         }
 
         const apiCall = mode === "edit" && replaceVideo
@@ -653,13 +617,13 @@ function UploadVideo({ mode = "new" }) {
         switch (mode) {
             case "add-episode": return {
                 title:       seriesInfo ? `Add Episode — ${seriesInfo.title}` : "Add Episode",
-                submitLabel: "Add Episode",
+                submitLabel: "Add",
                 submitIcon:  <Plus className="w-4 h-4" />,
                 backPath:    seriesIdParam ? `/series/${seriesIdParam}` : "/",
             };
             case "edit": return {
                 title:       "Edit Video",
-                submitLabel: replaceVideo ? "Replace & Save" : "Save Changes",
+                submitLabel: replaceVideo ? "Replace" : "Save",
                 submitIcon:  replaceVideo ? <RefreshCw className="w-4 h-4" /> : <Upload className="w-4 h-4" />,
                 backPath:    existingVideo?.seriesId
                     ? `/series/${existingVideo.seriesId?._id || existingVideo.seriesId}`
@@ -667,7 +631,7 @@ function UploadVideo({ mode = "new" }) {
             };
             default: return {
                 title:       "Upload Video",
-                submitLabel: "Upload Video",
+                submitLabel: "Upload",
                 submitIcon:  <Upload className="w-4 h-4" />,
                 backPath:    "/",
             };
@@ -676,16 +640,16 @@ function UploadVideo({ mode = "new" }) {
 
     if (pageLoading) return (
         <div className="min-h-screen bg-slate-950 flex items-center justify-center">
-            <Loader className="w-10 h-10 animate-spin text-red-500" />
+            <Loader2 className="w-10 h-10 animate-spin text-red-500" />
         </div>
     );
 
     return (
-        <div className="min-h-screen bg-slate-950 text-white">
+        <div className="min-h-screen bg-slate-950 text-white px-4 sm:px-6">
 
             {/* ── Header ─────────────────────────────────────────────────────── */}
             <header className="sticky top-0 z-30 bg-slate-950/95 backdrop-blur-sm border-b border-slate-800">
-                <div className="container mx-auto px-3 sm:px-4 py-3">
+                <div className="mx-auto px-3 sm:px-4 py-3">
                     <div className="flex items-center gap-3">
                         <button
                             onClick={() => navigate(config.backPath)}
@@ -710,7 +674,7 @@ function UploadVideo({ mode = "new" }) {
                 </div>
             </header>
 
-            <main className="container mx-auto px-3 sm:px-4 py-5 sm:py-8 max-w-3xl">
+            <main className="mx-auto px-3 sm:px-4 py-5 sm:py-8">
                 <div className="space-y-4 sm:space-y-5">
 
                     {/* Series context banner (add-episode) */}
@@ -779,12 +743,12 @@ function UploadVideo({ mode = "new" }) {
                                     />
                                     <label
                                         htmlFor="video-upload"
-                                        className={`flex flex-col items-center gap-2 cursor-pointer ${uploading ? "pointer-events-none" : ""}`}
+                                        className={`flex flex-col items-center gap-2 cursor-pointer overflow-hidden min-w-0 ${uploading ? "pointer-events-none" : ""}`}
                                     >
                                         <Upload className="w-8 h-8 sm:w-10 sm:h-10 text-slate-500" />
                                         {videoFile ? (
-                                            <div>
-                                                <p className="text-white font-medium text-sm sm:text-base truncate max-w-xs mx-auto">{videoFile.name}</p>
+                                            <div className="flex flex-col items-center w-full min-w-0">
+                                                <p className="text-white font-medium text-sm sm:text-base truncate w-full min-w-0 text-center">{videoFile.name}</p>
                                                 <p className="text-xs sm:text-sm text-slate-400 mt-0.5">{(videoFile.size / (1024 * 1024 * 1024)).toFixed(2)} GB</p>
                                             </div>
                                         ) : (
@@ -855,7 +819,7 @@ function UploadVideo({ mode = "new" }) {
                                     className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs sm:text-sm transition disabled:opacity-50"
                                 >
                                     {generatingThumbs
-                                        ? <><Loader className="w-3.5 h-3.5 animate-spin" /> Generating…</>
+                                        ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Generating…</>
                                         : <><RefreshCw className="w-3.5 h-3.5" /> {thumbCandidates.length ? 'Regenerate' : 'Generate from video'}</>
                                     }
                                 </button>
@@ -878,7 +842,7 @@ function UploadVideo({ mode = "new" }) {
                                             className="mt-3 w-full flex items-center justify-center gap-2 px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg text-sm font-semibold transition disabled:opacity-50"
                                         >
                                             {applyingThumb
-                                                ? <><Loader className="w-4 h-4 animate-spin" /> Applying…</>
+                                                ? <><Loader2 className="w-4 h-4 animate-spin" /> Applying…</>
                                                 : <><Check className="w-4 h-4" strokeWidth={3} /> Set as thumbnail</>
                                             }
                                         </button>
@@ -896,7 +860,9 @@ function UploadVideo({ mode = "new" }) {
                         <h2 className="text-base sm:text-lg font-semibold mb-3">Video Info</h2>
                         <div className="space-y-3">
                             <div>
-                                <label className="block text-xs sm:text-sm font-medium text-slate-300 mb-1">Title *</label>
+                                <label className="block text-xs sm:text-sm font-medium text-slate-300 mb-1">
+                                    {(mode === "add-episode" || (mode !== "edit" && assignToSeries)) ? "Episode Title *" : "Title *"}
+                                </label>
                                 <input
                                     type="text"
                                     name="title"
@@ -906,7 +872,52 @@ function UploadVideo({ mode = "new" }) {
                                     disabled={uploading}
                                     className="w-full px-3 py-2 text-sm bg-slate-800 border border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500"
                                 />
+                                {/* Recommend name — shown when there's a series+episode context */}
+                                {(() => {
+                                    const seriesTitleForEp =
+                                        mode === "add-episode"
+                                            ? seriesInfo?.title
+                                            : (mode !== "edit" && assignToSeries && formData.seriesId)
+                                                ? availableSeries.find(s => s._id === formData.seriesId)?.title
+                                                : (mode === "edit" && assignToSeries && formData.seriesId)
+                                                    ? availableSeries.find(s => s._id === formData.seriesId)?.title
+                                                    : null;
+                                    if (!seriesTitleForEp) return null;
+                                    const sn = String(formData.seasonNumber || 1).padStart(2, "0");
+                                    const en = String(formData.episodeNumber || 1).padStart(2, "0");
+                                    const suggested = `${seriesTitleForEp} - S${sn}E${en}`;
+                                    return (
+                                        <button
+                                            type="button"
+                                            onClick={() => setFormData(prev => ({ ...prev, title: suggested }))}
+                                            disabled={uploading}
+                                            className="mt-1.5 flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-slate-500 text-slate-300 hover:text-white rounded-lg text-xs transition group disabled:opacity-50"
+                                            title={`Set title to "${suggested}"`}
+                                        >
+                                            <Sparkles className="w-3.5 h-3.5 text-amber-400 group-hover:text-amber-300 shrink-0" />
+                                            <span>Recommend name</span>
+                                            <span className="text-slate-500 truncate max-w-50">→ {suggested}</span>
+                                        </button>
+                                    );
+                                })()}
                             </div>
+
+                            {/* Series Title — only shown in new-mode when NOT assigning to existing series */}
+                            {mode === "new" && !assignToSeries && (
+                                <div>
+                                    <label className="block text-xs sm:text-sm font-medium text-slate-300 mb-1">Series Title *</label>
+                                    <input
+                                        type="text"
+                                        value={seriesTitle}
+                                        onChange={e => { setSeriesTitle(e.target.value); setSeriesTitleEdited(true); }}
+                                        placeholder="Series / show name…"
+                                        disabled={uploading}
+                                        className="w-full px-3 py-2 text-sm bg-slate-800 border border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500"
+                                    />
+                                    <p className="text-xs text-slate-500 mt-1">A new series will be created with this name.</p>
+                                </div>
+                            )}
+
                             <div>
                                 <label className="block text-xs sm:text-sm font-medium text-slate-300 mb-1">Description</label>
                                 <textarea
@@ -1123,7 +1134,7 @@ function UploadVideo({ mode = "new" }) {
                             className="flex-1 px-4 py-2.5 sm:py-3 text-sm sm:text-base bg-red-500 hover:bg-red-600 rounded-lg transition font-semibold flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             {uploading ? (
-                                <><Loader className="w-4 h-4 animate-spin" /> {uploadProgress > 0 ? `${uploadProgress}%` : "Processing…"}</>
+                                <><Loader2 className="w-4 h-4 animate-spin" /> {uploadProgress > 0 ? `${uploadProgress}%` : "Processing…"}</>
                             ) : (
                                 <>{config.submitIcon} {config.submitLabel}</>
                             )}
