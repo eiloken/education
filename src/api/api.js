@@ -108,6 +108,14 @@ export const videoAPI = {
     triggerTranscode: async (id) =>
         (await axios.post(`${API_URL}/api/videos/${id}/transcode`)).data,
 
+    // Admin: remove HLS segments and revert to raw stream
+    removeTranscode: async (id) =>
+        (await axios.delete(`${API_URL}/api/videos/${id}/transcode`)).data,
+
+    // Admin: get current queue status { active, maxActive, queued, activeIds, queuedIds }
+    getTranscodeQueue: async () =>
+        (await axios.get(`${API_URL}/api/videos/transcode-queue`)).data,
+
     // ── Metadata ──────────────────────────────────────────────────────────────
     getTags:       async () => (await axios.get(`${API_URL}/api/videos/metadata/tags`)).data,
     getStudios:    async () => (await axios.get(`${API_URL}/api/videos/metadata/studios`)).data,

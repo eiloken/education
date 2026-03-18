@@ -135,14 +135,47 @@ export function SeriesDetail() {
     const handleTranscode = async (episodeId) => {
         try {
             await videoAPI.triggerTranscode(episodeId);
-            toast.success('Transcoding started — this runs in the background');
-            const update = ep => ep._id === episodeId ? { ...ep, hlsStatus: 'processing' } : ep;
+            toast.success('Transcoding queued — optimizing in the background');
+            const update = ep => ep._id === episodeId ? { ...ep, hlsStatus: 'pending' } : ep;
             setEpisodes(prev => prev.map(update));
-            setCurrentEpisode(prev => prev?._id === episodeId ? { ...prev, hlsStatus: 'processing' } : prev);
+            setCurrentEpisode(prev => prev?._id === episodeId ? { ...prev, hlsStatus: 'pending' } : prev);
         } catch {
             toast.error('Failed to start transcoding');
         }
     };
+
+    const handleRestore = async (episodeId) => {
+        if (!window.confirm('Remove HLS transcoding and revert to the original file?')) return;
+        try {
+            await videoAPI.removeTranscode(episodeId);
+            toast.success('Reverted to original video');
+            const update = ep => ep._id === episodeId ? { ...ep, hlsStatus: 'none', resolutions: [] } : ep;
+            setEpisodes(prev => prev.map(update));
+            setCurrentEpisode(prev => prev?._id === episodeId ? { ...prev, hlsStatus: 'none', resolutions: [] } : prev);
+        } catch {
+            toast.error('Failed to remove transcoding');
+        }
+    };
+
+    // ── Auto-poll HLS status while current episode is pending/processing ─────
+    useEffect(() => {
+        const ep = currentEpisode;
+        if (!ep || (ep.hlsStatus !== 'pending' && ep.hlsStatus !== 'processing')) return;
+
+        const interval = setInterval(async () => {
+            try {
+                const { hlsStatus, resolutions } = await videoAPI.getHlsStatus(ep._id);
+                if (hlsStatus === ep.hlsStatus) return; // no change yet
+                const update = e => e._id === ep._id ? { ...e, hlsStatus, resolutions } : e;
+                setEpisodes(prev => prev.map(update));
+                setCurrentEpisode(prev => prev?._id === ep._id ? { ...prev, hlsStatus, resolutions } : prev);
+                if (hlsStatus === 'ready') toast.success('Streaming optimization complete!');
+                if (hlsStatus === 'failed') toast.error('Transcoding failed — you can retry from the episode info panel');
+            } catch { /* ignore — network hiccup, will retry next tick */ }
+        }, 5000); // poll every 5 s
+
+        return () => clearInterval(interval);
+    }, [currentEpisode?._id, currentEpisode?.hlsStatus]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleDeleteSeries = async () => {
         if (!window.confirm(`Delete "${series.title}" and ALL its episodes? This cannot be undone.`)) return;
@@ -352,6 +385,7 @@ export function SeriesDetail() {
                     episode={currentEpisode}
                     isAdmin={isAdmin}
                     onTranscode={handleTranscode}
+                    onRestore={handleRestore}
                 />
             </div>
 
@@ -469,6 +503,8 @@ const EpisodeRow = forwardRef(function EpisodeRow({ episode, isActive, onSelect,
         } catch { return null; }
     })();
 
+    const { hlsStatus } = episode;
+
     return (
         <div ref={ref} onClick={onSelect}
             className={`flex gap-2.5 sm:gap-3 p-2 sm:p-2.5 rounded-lg cursor-pointer transition group ${
@@ -498,6 +534,13 @@ const EpisodeRow = forwardRef(function EpisodeRow({ episode, isActive, onSelect,
                         <div className="h-full bg-red-500" style={{ width: `${progressPct * 100}%` }} />
                     </div>
                 )}
+
+                <div className={`w-1.5 h-1.5 rounded-full absolute top-1 left-1 border border-slate-300 ${hlsStatus === 'pending' || hlsStatus === 'processing' 
+                    ? 'bg-amber-400' 
+                    : hlsStatus === 'ready' 
+                        ? 'bg-green-400' 
+                        : 'bg-red-500'
+                }`} />
             </div>
 
             {/* Info */}
@@ -538,7 +581,7 @@ const EpisodeRow = forwardRef(function EpisodeRow({ episode, isActive, onSelect,
 });
 
 // ─── HLS Status Badge ─────────────────────────────────────────────────────────
-function HlsStatusBadge({ episode, isAdmin, onTranscode }) {
+function HlsStatusBadge({ episode, isAdmin, onTranscode, onRestore }) {
     if (!episode) return null;
     const { hlsStatus } = episode;
 
@@ -546,16 +589,27 @@ function HlsStatusBadge({ episode, isAdmin, onTranscode }) {
         return (
             <span className="flex items-center gap-1.5 text-xs text-amber-400 bg-amber-400/10 px-2 py-1 rounded-full">
                 <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shrink-0" />
-                Optimizing for streaming…
+                {hlsStatus === 'pending' ? 'Queued for optimization…' : 'Optimizing for streaming…'}
             </span>
         );
     }
 
     if (hlsStatus === 'ready') {
         return (
-            <span className="flex items-center gap-1.5 text-xs text-green-400 bg-green-400/10 px-2 py-1 rounded-full">
-                <span className="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0" />
-                Streaming optimized
+            <span className="flex items-center gap-2">
+                <span className="flex items-center gap-1.5 text-xs text-green-400 bg-green-400/10 px-2 py-1 rounded-full">
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0" />
+                    Streaming optimized
+                </span>
+                {isAdmin && (
+                    <button
+                        onClick={() => onRestore(episode._id)}
+                        title="Remove HLS and revert to original file"
+                        className="text-xs text-slate-500 hover:text-slate-300 transition"
+                    >
+                        Restore original
+                    </button>
+                )}
             </span>
         );
     }
