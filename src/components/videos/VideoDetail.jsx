@@ -5,7 +5,7 @@ import toast from "react-hot-toast";
 import VideoPlayer from "./VideoPlayer";
 import {
     ArrowLeft, Building, Calendar, ChevronDown, ChevronUp,
-    Clock, Edit, Eye, Film, Heart, Layers, Play, Plus, Tag, Trash2, Users, UserCircle
+    Clock, Cpu, Edit, Eye, Film, Heart, Layers, Play, Plus, Tag, Trash2, Users, UserCircle
 } from "lucide-react";
 
 import { MetaChip } from "../series/SeriesCard";
@@ -103,8 +103,6 @@ export function SeriesDetail() {
         setSelectedSeason(ep.seasonNumber || 1);
         setSearchParams({ ep: ep._id });
         window.scrollTo({ top: 0, behavior: 'smooth' });
-        // Auto-collapse episodes list on mobile after selecting
-        if (!isXl) setEpisodesCollapsed(true);
     };
 
     const handleToggleFavorite = async () => {
@@ -132,6 +130,18 @@ export function SeriesDetail() {
             success: "Favorite updated",
             error: "Failed to update favorite"
         });
+    };
+
+    const handleTranscode = async (episodeId) => {
+        try {
+            await videoAPI.triggerTranscode(episodeId);
+            toast.success('Transcoding started — this runs in the background');
+            const update = ep => ep._id === episodeId ? { ...ep, hlsStatus: 'processing' } : ep;
+            setEpisodes(prev => prev.map(update));
+            setCurrentEpisode(prev => prev?._id === episodeId ? { ...prev, hlsStatus: 'processing' } : prev);
+        } catch {
+            toast.error('Failed to start transcoding');
+        }
     };
 
     const handleDeleteSeries = async () => {
@@ -196,6 +206,9 @@ export function SeriesDetail() {
                     isEmbedded
                     videoId={currentEpisode._id}
                     videoUrl={videoAPI.getStreamUrl(currentEpisode._id)}
+                    hlsUrl={currentEpisode.hlsStatus === 'ready'
+                        ? videoAPI.getHlsUrl(currentEpisode._id)
+                        : null}
                     availableQualities={currentEpisode.resolutions?.map(r => r.quality) || []}
                     onPrevious={currentIdx > 0 ? handlePrevEpisode : null}
                     onNext={currentIdx < episodes.length - 1 ? handleNextEpisode : null}
@@ -335,6 +348,11 @@ export function SeriesDetail() {
                 {currentEpisode.year && (
                     <span className="flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5" />{currentEpisode.year}</span>
                 )}
+                <HlsStatusBadge
+                    episode={currentEpisode}
+                    isAdmin={isAdmin}
+                    onTranscode={handleTranscode}
+                />
             </div>
 
             {/* Description */}
@@ -518,6 +536,46 @@ const EpisodeRow = forwardRef(function EpisodeRow({ episode, isActive, onSelect,
         </div>
     );
 });
+
+// ─── HLS Status Badge ─────────────────────────────────────────────────────────
+function HlsStatusBadge({ episode, isAdmin, onTranscode }) {
+    if (!episode) return null;
+    const { hlsStatus } = episode;
+
+    if (hlsStatus === 'pending' || hlsStatus === 'processing') {
+        return (
+            <span className="flex items-center gap-1.5 text-xs text-amber-400 bg-amber-400/10 px-2 py-1 rounded-full">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shrink-0" />
+                Optimizing for streaming…
+            </span>
+        );
+    }
+
+    if (hlsStatus === 'ready') {
+        return (
+            <span className="flex items-center gap-1.5 text-xs text-green-400 bg-green-400/10 px-2 py-1 rounded-full">
+                <span className="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0" />
+                Streaming optimized
+            </span>
+        );
+    }
+
+    if (isAdmin) {
+        const isFailed = hlsStatus === 'failed';
+        return (
+            <button
+                onClick={() => onTranscode(episode._id)}
+                title={isFailed ? 'Transcoding failed — click to retry' : 'Transcode for adaptive streaming'}
+                className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 px-2 py-1 rounded-full transition"
+            >
+                <Cpu className="w-3 h-3 shrink-0" />
+                {isFailed ? '⚠ Retry transcode' : 'Transcode'}
+            </button>
+        );
+    }
+
+    return null;
+}
 
 function MetaSections({ item, onStudioClick, onActorClick, onCharacterClick, onTagClick }) {
     if (!item) return null;

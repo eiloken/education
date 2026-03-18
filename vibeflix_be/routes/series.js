@@ -4,7 +4,7 @@ import path from "path";
 import Series from "../models/Series.js";
 import Video from "../models/Video.js";
 import Favorite from "../models/Favorite.js";
-import { thumbnailDir } from "../server.js";
+import { thumbnailDir, uploadDir } from "../server.js";
 import { requireAdmin, authenticate } from "../middleware/authMiddleware.js";
 import { v4 as uuidv4 } from "uuid";
 import multer from "multer";
@@ -250,8 +250,18 @@ router.delete("/:id", requireAdmin, async (req, res) => {
         const series = await Series.findById(req.params.id);
         if (!series) return res.status(404).json({ error: 'Series not found' });
 
-        const episodes = await Video.find({ seriesId: series._id }, '_id');
+        const episodes = await Video.find({ seriesId: series._id }, '_id videoPath thumbnailPath');
         const episodeIds = episodes.map(e => e._id);
+
+        const videosPath = episodes.map(e => path.join(uploadDir, e.videoPath)).filter(Boolean);
+        const thumbnailsPath = episodes.map(e => path.join(thumbnailDir, e.thumbnailPath)).filter(Boolean);
+        const hlsDirs = episodes.map(e => path.join(uploadDir, 'hls', e._id.toString())).filter(Boolean);
+
+        // Series thumbnail
+        if (series.thumbnailPath) {
+            const p = path.join(thumbnailDir, series.thumbnailPath);
+            if (fs.existsSync(p)) { try { fs.unlinkSync(p); } catch (_) {} }
+        }
 
         await Promise.all([
             Video.deleteMany({ seriesId: series._id }),
@@ -259,12 +269,15 @@ router.delete("/:id", requireAdmin, async (req, res) => {
             Favorite.deleteMany({ itemId: { $in: episodeIds }, itemType: 'video' }),
         ]);
 
-        if (series.thumbnailPath) {
-            const p = path.join(thumbnailDir, series.thumbnailPath);
-            if (fs.existsSync(p)) { try { fs.unlinkSync(p); } catch (_) {} }
-        }
-
         await Series.findByIdAndDelete(req.params.id);
+
+        // Episodes
+        await Promise.all([
+            ...videosPath.map(p => fs.existsSync(p) ? fs.unlinkSync(p) : Promise.resolve()),
+            ...thumbnailsPath.map(p => fs.existsSync(p) ? fs.unlinkSync(p) : Promise.resolve()),
+            ...hlsDirs.map(p => fs.existsSync(p) ? fs.rmSync(p, { recursive: true }) : Promise.resolve()),
+        ]);
+        
         res.json({ success: true, message: 'Series and all episodes deleted' });
     } catch (error) {
         res.status(500).json({ error: error.message });

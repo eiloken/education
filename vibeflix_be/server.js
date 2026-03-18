@@ -17,6 +17,7 @@ import activityRoutes  from './routes/activity.js';
 
 export let uploadDir    = process.env.ABS_UPLOAD_PATH;
 export let thumbnailDir = process.env.ABS_THUMBNAIL_PATH;
+export const MAX_TRANSCODE_RES = parseInt(process.env.MAX_TRANSCODE_RES || 1080);
 
 for (const [label, dir] of [['upload', uploadDir], ['thumbnail', thumbnailDir]]) {
     if (!fs.existsSync(dir)) {

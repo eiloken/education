@@ -1,5 +1,10 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { authAPI } from '../api/api';
+import toast from 'react-hot-toast';
+import pkg from '../../package.json';
+
+const APP_NAME = pkg.name;
+const APP_VERSION = pkg.version;
 
 const AuthContext = createContext(null);
 
@@ -23,6 +28,9 @@ export function AuthProvider({ children }) {
     const login = async (username, password) => {
         const data = await authAPI.login(username, password);
         setUser(data.user);
+        
+        //show welcome message with app name and version
+        toast.success(`Welcome, ${data.user.username}! You are now logged into ${APP_NAME} v${APP_VERSION}.`);
         return data; // caller can check data.requirePasswordChange
     };
 

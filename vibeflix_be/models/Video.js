@@ -71,7 +71,24 @@ const videoSchema = new mongoose.Schema({
     seasonNumber: {
         type: Number,
         default: null
-    }
+    },
+
+    // ── HLS transcoding ────────────────────────────────────────────────────────
+    // 'none'       → never transcoded (raw stream only)
+    // 'pending'    → queued, not started
+    // 'processing' → ffmpeg running right now
+    // 'ready'      → HLS segments available
+    // 'failed'     → transcoding error (raw stream fallback)
+    hlsStatus: {
+        type: String,
+        enum: ['none', 'pending', 'processing', 'ready', 'failed'],
+        default: 'none'
+    },
+    // Relative path from uploadDir to the hls/<videoId>/ directory
+    hlsPath: {
+        type: String,
+        default: null
+    },
 }, {
     timestamps: true
 });
@@ -86,5 +103,6 @@ videoSchema.index({ year: 1 });
 videoSchema.index({ uploadDate: -1 });
 videoSchema.index({ isFavorite: 1 });
 videoSchema.index({ seriesId: 1, seasonNumber: 1, episodeNumber: 1 });
+videoSchema.index({ hlsStatus: 1 });
 
 export default mongoose.model('Video', videoSchema);

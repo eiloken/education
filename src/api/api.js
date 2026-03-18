@@ -95,6 +95,20 @@ export const videoAPI = {
     trackView: async (id) =>
         (await axios.patch(`${API_URL}/api/videos/${id}/view`)).data,
 
+    // ── HLS ───────────────────────────────────────────────────────────────────
+    // Returns a plain URL string (not a promise) — passed directly as <video src>
+    getHlsUrl: (id) =>
+        `${API_URL}/api/videos/${id}/hls/master.m3u8`,
+
+    // Poll transcoding progress — { hlsStatus, resolutions }
+    getHlsStatus: async (id) =>
+        (await axios.get(`${API_URL}/api/videos/${id}/hls-status`)).data,
+
+    // Admin: kick off background transcoding for an existing video
+    triggerTranscode: async (id) =>
+        (await axios.post(`${API_URL}/api/videos/${id}/transcode`)).data,
+
+    // ── Metadata ──────────────────────────────────────────────────────────────
     getTags:       async () => (await axios.get(`${API_URL}/api/videos/metadata/tags`)).data,
     getStudios:    async () => (await axios.get(`${API_URL}/api/videos/metadata/studios`)).data,
     getActors:     async () => (await axios.get(`${API_URL}/api/videos/metadata/actors`)).data,

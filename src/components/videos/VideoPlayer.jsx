@@ -1,4 +1,5 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
+import Hls from 'hls.js'
 import { Play, Pause, Volume2, VolumeX, Maximize, Minimize, Settings, SkipBack, SkipForward, RefreshCcw, RotateCcw, Volume1, RefreshCw } from 'lucide-react';
 import useMyStorage from '../../utils/localStorage';
 
@@ -6,6 +7,7 @@ import useMyStorage from '../../utils/localStorage';
 function VideoPlayer({
     videoId,
     videoUrl,
+    hlsUrl,
     availableQualities = [],
     onPrevious = null,
     onNext = null,
@@ -17,6 +19,7 @@ function VideoPlayer({
 }) {
     const videoRef = useRef(null);
     const containerRef = useRef(null);
+    const hlsRef = useRef(null);
 
     const [isPlaying, setIsPlaying] = useState(false);
     const [currentTime, setCurrentTime] = useState(0);
@@ -48,6 +51,9 @@ function VideoPlayer({
     const [hoverPct, setHoverPct]       = useState(null); // 0-1, null = not hovering
     const [dragPct, setDragPct]         = useState(null); // 0-1 while dragging
     const isDraggingRef = useRef(false); // sync ref for pointer handlers
+
+    const [hlsLevels, setHlsLevels] = useState([]);
+    const [hlsLevel, setHlsLevel] = useState(-1);
 
     const controlsTimeoutRef    = useRef(null);
     const lastTapRef            = useRef({ time: 0, x: 0 });
@@ -81,8 +87,15 @@ function VideoPlayer({
         const video = videoRef.current;
         if (!video) return;
 
+        if (hlsRef.current) {
+            hlsRef.current.destroy();
+            hlsRef.current = null;
+        }
+
         video.pause();
-        video.currentTime = 0;
+        video.removeAttribute('src');
+        video.load();
+
         setIsPlaying(false);
         setCurrentTime(0);
         setDuration(0);
@@ -91,6 +104,8 @@ function VideoPlayer({
         setIsLoading(true);
         setEndedState(null);
         setCountdown(10);
+        setHlsLevels([]);
+        setHlsLevel(-1);
         if (countdownRef.current) clearInterval(countdownRef.current);
 
         video.volume = isMuted ? 0 : volume;
@@ -109,8 +124,74 @@ function VideoPlayer({
             setResumePrompt(null);
             shouldAutoPlayRef.current = true;
         }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [videoUrl, videoId]);
+
+        if (hlsUrl && Hls.isSupported()) {
+            const hls = new Hls({
+                startLevel: -1,
+                autoLevelEnabled: true,
+                capLevelToPlayerSize: true,
+                maxBufferLength: 30,
+                maxMaxBufferLength: 60,
+                maxBufferSize: 60 * 1000 * 1000,
+                manifestLoadingMaxRetry: 3,
+                levelLoadingMaxRetry: 3,
+                fragLoadingMaxRetry: 4,
+            });
+
+            hls.loadSource(hlsUrl);
+            hls.attachMedia(video);
+
+            hls.on(Hls.Events.MANIFEST_PARSED, (_, data) => {
+                const levels = data.levels.map((lvl, idx) => ({
+                    index: idx,
+                    label: lvl.name || (lvl.height ? `${lvl.height}p` : `Level ${idx}`),
+                }));
+                setHlsLevels(levels);
+                if (shouldAutoPlayRef.current) {
+                    video.play().catch(() => {});
+                }
+            });
+
+            hls.on(Hls.Events.LEVEL_SWITCHED, (_, data) => {
+                setHlsLevel(data.level);
+            });
+
+            hls.on(Hls.Events.ERROR, (_, data) => {
+                if (data.fatal) {
+                    console.error('HLS error:', data);
+                    if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+                        hls.startLoad(); // try to recover
+                    } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+                        hls.recoverMediaError();
+                    } else {
+                        hls.destroy();
+                        hlsRef.current = null;
+                        video.src = videoUrl;
+                        video.load();
+                    }
+                }
+            });
+
+            hlsRef.current = hls;
+        } else if (hlsUrl && video.canPlayType('application/vnd.apple.mpegurl')) {
+            video.src = hlsUrl;
+            if (shouldAutoPlayRef.current) {
+                video.play().catch(() => {});
+            }
+        } else {
+            video.src = videoUrl;
+            if (shouldAutoPlayRef.current) {
+                video.play().catch(() => {});
+            }
+        }
+
+        return () => {
+            if (hlsRef.current) {
+                hlsRef.current.destroy();
+                hlsRef.current = null;
+            }
+        }
+    }, [videoUrl, hlsUrl, videoId]);
 
     // ── Cleanup countdown on unmount ──────────────────────────────────────────
     useEffect(() => () => { if (countdownRef.current) clearInterval(countdownRef.current); }, []);
@@ -408,16 +489,25 @@ function VideoPlayer({
         } catch (_) {}
     }, []);
 
-    const handleQualityChange = (quality) => {
-        const time = videoRef.current?.currentTime || 0;
-        const playing = isPlaying;
-        setSelectedQuality(quality);
-        if (videoRef.current) {
-            videoRef.current.currentTime = time;
-            if (playing) videoRef.current.play();
-        }
+    const handleQualityChange = useCallback((levelIndexOrLabel) => {
         setShowSettings(false);
-    };
+        if (hlsRef.current) {
+            hlsRef.current.currentLevel = levelIndexOrLabel;
+            setHlsLevel(levelIndexOrLabel);
+        } else {
+            setSelectedQuality(levelIndexOrLabel);
+            const video = videoRef.current;
+            if (!video) return;
+            const saved = video.currentTime;
+            const wasPlaying = !video.paused;
+            video.src = `${videoUrl}?quality=${levelIndexOrLabel}`;
+            video.load();
+            video.currentTime = saved;
+            if (wasPlaying) video.play().catch(() => {});
+        }
+    }, [videoUrl]);
+
+    const hasQualityOptions = hlsLevels.length > 0 || availableQualities.length > 0;
 
     const showSkipIndicator = useCallback((side, seconds = 10) => {
         const accum = skipAccumRef.current;
@@ -561,7 +651,6 @@ function VideoPlayer({
             {/* Video element */}
             <video
                 ref={videoRef}
-                src={videoUrl}
                 className="w-full h-full object-contain"
                 playsInline
                 crossOrigin="anonymous"
@@ -763,20 +852,53 @@ function VideoPlayer({
 
                             {/* Right controls */}
                             <div className="flex items-center gap-1 shrink-0">
-                                {availableQualities.length > 0 && (
+                                {hasQualityOptions && (
                                     <div className="relative">
-                                        <button onClick={() => setShowSettings(v => !v)} className="p-1.5 sm:p-2 hover:bg-white/20 rounded-lg transition">
+                                        <button
+                                            onClick={() => setShowSettings(v => !v)}
+                                            className="p-1.5 sm:p-2 hover:bg-white/20 rounded-lg transition"
+                                            title="Quality"
+                                        >
                                             <Settings className="w-5 h-5 sm:w-6 sm:h-6 text-red-500" />
                                         </button>
+                            
                                         {showSettings && (
-                                            <div className="absolute bottom-full right-0 mb-2 bg-slate-900 rounded-lg overflow-hidden border border-slate-700 min-w-32 shadow-xl">
+                                            <div className="absolute bottom-full right-0 mb-2 bg-slate-900 rounded-lg overflow-hidden border border-slate-700 min-w-36 shadow-xl">
                                                 <div className="px-3 py-2 text-xs text-slate-400 border-b border-slate-700 uppercase tracking-wide">Quality</div>
-                                                {availableQualities.map(q => (
-                                                    <button key={q} onClick={() => handleQualityChange(q)}
-                                                        className={`w-full text-left px-4 py-2 hover:bg-slate-800 transition text-sm ${selectedQuality === q ? 'text-red-500' : 'text-white'}`}>
-                                                        {q}
-                                                    </button>
-                                                ))}
+                            
+                                                {hlsLevels.length > 0 ? (
+                                                    <>
+                                                        {/* Auto option */}
+                                                        <button
+                                                            onClick={() => handleQualityChange(-1)}
+                                                            className={`w-full text-left px-4 py-2 hover:bg-slate-800 transition text-sm ${hlsLevel === -1 ? 'text-red-500' : 'text-white'}`}
+                                                        >
+                                                            Auto {hlsLevel >= 0 && hlsLevels[hlsLevel] ? `(${hlsLevels[hlsLevel].label})` : ''}
+                                                        </button>
+                            
+                                                        {/* Manual quality options — highest first */}
+                                                        {[...hlsLevels].reverse().map(lvl => (
+                                                            <button
+                                                                key={lvl.index}
+                                                                onClick={() => handleQualityChange(lvl.index)}
+                                                                className={`w-full text-left px-4 py-2 hover:bg-slate-800 transition text-sm ${hlsLevel === lvl.index ? 'text-red-500' : 'text-white'}`}
+                                                            >
+                                                                {lvl.label}
+                                                            </button>
+                                                        ))}
+                                                    </>
+                                                ) : (
+                                                    // Legacy quality strings (pre-HLS)
+                                                    availableQualities.map(q => (
+                                                        <button
+                                                            key={q}
+                                                            onClick={() => handleQualityChange(q)}
+                                                            className={`w-full text-left px-4 py-2 hover:bg-slate-800 transition text-sm ${selectedQuality === q ? 'text-red-500' : 'text-white'}`}
+                                                        >
+                                                            {q}
+                                                        </button>
+                                                    ))
+                                                )}
                                             </div>
                                         )}
                                     </div>

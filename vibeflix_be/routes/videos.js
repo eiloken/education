@@ -5,7 +5,7 @@ import path from "path";
 import Video from "../models/Video.js";
 import Series from "../models/Series.js";
 import Favorite from "../models/Favorite.js";
-import { thumbnailDir, uploadDir } from "../server.js";
+import { MAX_TRANSCODE_RES, thumbnailDir, uploadDir } from "../server.js";
 import { requireAdmin, authenticate } from "../middleware/authMiddleware.js";
 import { v4 as uuidv4 } from 'uuid';
 import ffmpegPath from "ffmpeg-static";
@@ -54,6 +54,108 @@ const uploadWithThumb = multer({
 });
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+async function transcodeToHLS(videoPath, videoId) {
+    // Probe the source to decide which quality ladder to generate
+    const meta = await new Promise((resolve, reject) => {
+        Ffmpeg.ffprobe(videoPath, (err, m) => (err ? reject(err) : resolve(m)));
+    });
+ 
+    const srcHeight = meta.streams.find(s => s.codec_type === 'video')?.height ?? 0;
+ 
+    // Quality ladder — only generate renditions at or below the source height
+    const ladder = [
+        { label: '360p',  height: 360,  videoBr: '600k',   audioBr: '96k'  },
+        { label: '480p',  height: 480,  videoBr: '1200k',  audioBr: '128k' },
+        { label: '720p',  height: 720,  videoBr: '2500k',  audioBr: '128k' },
+        { label: '1080p', height: 1080, videoBr: '5000k',  audioBr: '192k' },
+        { label: '4k',    height: 2160, videoBr: '15000k', audioBr: '192k' },
+    ];
+
+    const rungs = ladder.filter(q => q.height <= srcHeight && q.height <= MAX_TRANSCODE_RES);
+    if (rungs.length === 0) {
+        rungs.push({ label: `${srcHeight}p`, height: srcHeight, videoBr: '800k', audioBr: '96k' });
+    }
+ 
+    const hlsBase = path.join(uploadDir, 'hls', videoId);
+    fs.mkdirSync(hlsBase, { recursive: true });
+ 
+    const generatedLabels = [];
+
+    const chooses = rungs.splice(-3);
+    for (const q of chooses) {
+        const qDir = path.join(hlsBase, q.label);
+        fs.mkdirSync(qDir, { recursive: true });
+ 
+        await new Promise((resolve, reject) => {
+            Ffmpeg(videoPath)
+                .outputOptions([
+                    // Scale: keep aspect ratio, width divisible by 2, cap at target height
+                    `-vf`, `scale=-2:'min(${q.height},ih)'`,
+                    `-c:v`, `libx264`,
+                    `-preset`, `fast`,          // fast encode; use 'slow' for better compression
+                    `-crf`, `22`,               // quality knob (18=great, 28=small file)
+                    `-maxrate`, q.videoBr,
+                    `-bufsize`, `${parseInt(q.videoBr) * 2}k`,
+                    `-c:a`, `aac`,
+                    `-b:a`, q.audioBr,
+                    `-ar`, `48000`,
+                    `-hls_time`, `6`,           // 6-second segments (sweet spot for ABR)
+                    `-hls_playlist_type`, `vod`,
+                    `-hls_segment_filename`, path.join(qDir, 'seg%03d.ts'),
+                ])
+                .output(path.join(qDir, 'index.m3u8'))
+                .on('end',   () => resolve())
+                .on('error', (err) => reject(err))
+                .run();
+        });
+ 
+        generatedLabels.push(q.label);
+        console.log(`✅  Transcoded to ${q.label} for video ${videoId}`);
+    }
+ 
+    // Write the master playlist that lists all renditions
+    const bandwidthMap = { '360p': 700000, '480p': 1400000, '720p': 2700000, '1080p': 5200000, '4k': 15500000 };
+    const resMap       = { '360p': '640x360', '480p': '854x480', '720p': '1280x720', '1080p': '1920x1080', '4k': '3840x2160' };
+ 
+    let master = '#EXTM3U\n#EXT-X-VERSION:3\n\n';
+    for (const q of chooses) {
+        const bw = bandwidthMap[q.label] ?? 1000000;
+        const res = resMap[q.label] ?? `x${q.height}`;
+        master += `#EXT-X-STREAM-INF:BANDWIDTH=${bw},RESOLUTION=${res},NAME="${q.label}"\n`;
+        master += `${q.label}/index.m3u8\n\n`;
+    }
+    fs.writeFileSync(path.join(hlsBase, 'master.m3u8'), master);
+ 
+    return generatedLabels;
+}
+ 
+/**
+ * Background helper — marks status, calls transcodeToHLS, updates the DB.
+ * Fire-and-forget: do NOT await this in the upload handler.
+ */
+async function startHLSJob(videoId, videoPath) {
+    try {
+        await Video.findByIdAndUpdate(videoId, { hlsStatus: 'processing' });
+        const labels = await transcodeToHLS(videoPath, videoId.toString());
+ 
+        // Persist the rendition list in the existing `resolutions` field too
+        const resolutions = labels.map(label => ({
+            quality: label,
+            path:    `hls/${videoId}/${label}/index.m3u8`,
+        }));
+ 
+        await Video.findByIdAndUpdate(videoId, {
+            hlsStatus:   'ready',
+            hlsPath:     `hls/${videoId}`,
+            resolutions,
+        });
+        console.log(`✅ HLS ready for video ${videoId}: ${labels.join(', ')}`);
+    } catch (err) {
+        console.error(`❌ HLS transcoding failed for ${videoId}:`, err.message);
+        await Video.findByIdAndUpdate(videoId, { hlsStatus: 'failed' }).catch(() => {});
+    }
+}
+
 async function generateThumbnail(videoPath, outputPath) {
     const duration = await getVideoDuration(videoPath);
     const seconds  = (duration && Math.floor(duration / 2)) || 5;
@@ -326,6 +428,100 @@ router.post('/upload', requireAdmin, uploadWithThumb.fields([{name:'video',maxCo
     }
 });
 
+// GET /api/videos/:id/hls/master.m3u8  — master adaptive playlist
+router.get('/:id/hls/master.m3u8', async (req, res) => {
+    try {
+        const video = await Video.findById(req.params.id).select('hlsStatus hlsPath');
+        if (!video) return res.status(404).json({ error: 'Video not found' });
+        if (video.hlsStatus !== 'ready') return res.status(404).json({ error: 'HLS not ready', status: video.hlsStatus });
+ 
+        const masterPath = path.join(uploadDir, 'hls', req.params.id, 'master.m3u8');
+        if (!fs.existsSync(masterPath)) return res.status(404).json({ error: 'Master playlist missing' });
+ 
+        res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+        res.setHeader('Cache-Control', 'no-cache');    // playlist must stay fresh
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        fs.createReadStream(masterPath).pipe(res);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+ 
+// GET /api/videos/:id/hls/:quality/index.m3u8  — quality-level playlist
+router.get('/:id/hls/:quality/index.m3u8', async (req, res) => {
+    try {
+        const playlistPath = path.join(uploadDir, 'hls', req.params.id, req.params.quality, 'index.m3u8');
+        if (!fs.existsSync(playlistPath)) return res.status(404).send('Not found');
+ 
+        res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        fs.createReadStream(playlistPath).pipe(res);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+ 
+// GET /api/videos/:id/hls/:quality/:segment  — .ts segment files
+router.get('/:id/hls/:quality/:segment', async (req, res) => {
+    try {
+        // Basic guard: only allow .ts files
+        if (!req.params.segment.endsWith('.ts')) return res.status(400).send('Bad request');
+ 
+        const segPath = path.join(uploadDir, 'hls', req.params.id, req.params.quality, req.params.segment);
+        if (!fs.existsSync(segPath)) return res.status(404).send('Not found');
+ 
+        const stat = fs.statSync(segPath);
+        res.setHeader('Content-Type', 'video/MP2T');
+        res.setHeader('Content-Length', stat.size);
+        // Segments are immutable — aggressive caching is safe
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        fs.createReadStream(segPath).pipe(res);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// POST /api/videos/:id/transcode  [admin only]
+router.post('/:id/transcode', requireAdmin, async (req, res) => {
+    try {
+        const video = await Video.findById(req.params.id);
+        if (!video) return res.status(404).json({ error: 'Video not found' });
+ 
+        if (video.hlsStatus === 'processing') {
+            return res.status(409).json({ error: 'Transcoding already in progress' });
+        }
+ 
+        const videoPath = path.join(uploadDir, video.videoPath);
+        if (!fs.existsSync(videoPath)) return res.status(404).json({ error: 'Source file not found' });
+ 
+        // Clean up any previous failed HLS attempt
+        const hlsDir = path.join(uploadDir, 'hls', req.params.id);
+        if (fs.existsSync(hlsDir)) fs.rmSync(hlsDir, { recursive: true, force: true });
+ 
+        await Video.findByIdAndUpdate(req.params.id, { hlsStatus: 'pending' });
+ 
+        // Fire and forget
+        startHLSJob(video._id, videoPath);
+ 
+        res.json({ success: true, message: 'Transcoding started', status: 'processing' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+ 
+// GET /api/videos/:id/hls-status  — poll transcoding progress
+router.get('/:id/hls-status', async (req, res) => {
+    try {
+        const video = await Video.findById(req.params.id).select('hlsStatus resolutions');
+        if (!video) return res.status(404).json({ error: 'Video not found' });
+        res.json({ hlsStatus: video.hlsStatus, resolutions: video.resolutions });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // ─── PUT /api/videos/:id  [admin only] ───────────────────────────────────────
 router.put('/:id', requireAdmin, async (req, res) => {
     try {
@@ -395,25 +591,31 @@ router.patch('/:id/favorite', authenticate, async (req, res) => {
     }
 });
 
-// ─── DELETE /api/videos/:id  [admin only] ────────────────────────────────────
 router.delete('/:id', requireAdmin, async (req, res) => {
     try {
         const video = await Video.findById(req.params.id);
         if (!video) return res.status(404).json({ error: 'Video not found' });
 
+        // Raw video file
         const videoPath = path.join(uploadDir, video.videoPath);
         if (fs.existsSync(videoPath)) { try { fs.unlinkSync(videoPath); } catch (_) {} }
 
+        // Thumbnail
         if (video.thumbnailPath) {
             const thumbPath = path.join(thumbnailDir, video.thumbnailPath);
             if (fs.existsSync(thumbPath)) { try { fs.unlinkSync(thumbPath); } catch (_) {} }
+        }
+
+        // HLS folder
+        const hlsDir = path.join(uploadDir, 'hls', req.params.id);
+        if (fs.existsSync(hlsDir)) {
+            try { fs.rmSync(hlsDir, { recursive: true, force: true }); } catch (_) {}
         }
 
         const seriesId = video.seriesId;
         await Favorite.deleteMany({ itemId: video._id, itemType: 'video' });
         await Video.findByIdAndDelete(req.params.id);
 
-        // Rebuild series metadata; delete series if no episodes remain
         if (seriesId) {
             const remaining = await Video.countDocuments({ seriesId });
             if (remaining === 0) {
@@ -435,36 +637,47 @@ router.delete('/:id', requireAdmin, async (req, res) => {
     }
 });
 
-// ─── GET /api/videos/:id/stream ──────────────────────────────────────────────
 router.get('/:id/stream', async (req, res) => {
     try {
         const video = await Video.findById(req.params.id);
         if (!video) return res.status(404).json({ error: 'Video not found' });
-
+ 
         const videoPath = path.join(uploadDir, video.videoPath);
         if (!fs.existsSync(videoPath)) return res.status(404).json({ error: 'Video file not found' });
-
-        const stat    = fs.statSync(videoPath);
+ 
+        const stat     = fs.statSync(videoPath);
         const fileSize = stat.size;
-        const range   = req.headers.range;
-
+        const range    = req.headers.range;
+ 
+        // Detect MIME type from extension instead of hardcoding mp4
+        const ext = path.extname(video.videoPath).toLowerCase();
+        const mimeMap = { '.mp4': 'video/mp4', '.webm': 'video/webm', '.mkv': 'video/x-matroska', '.mov': 'video/quicktime' };
+        const contentType = mimeMap[ext] || 'video/mp4';
+ 
         if (range) {
-            const parts  = range.replace(/bytes=/, '').split('-');
-            const start  = parseInt(parts[0], 10);
-            const end    = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+            const [rawStart, rawEnd] = range.replace(/bytes=/, '').split('-');
+            const start = parseInt(rawStart, 10);
+            // Cap chunk at 10 MB to prevent Node from buffering the entire file
+            const CHUNK = 10 * 1024 * 1024;
+            const end   = rawEnd ? Math.min(parseInt(rawEnd, 10), fileSize - 1)
+                                 : Math.min(start + CHUNK, fileSize - 1);
             const chunkSize = end - start + 1;
-            const file   = fs.createReadStream(videoPath, { start, end });
-            const head   = {
+ 
+            res.writeHead(206, {
                 'Content-Range':  `bytes ${start}-${end}/${fileSize}`,
                 'Accept-Ranges':  'bytes',
                 'Content-Length': chunkSize,
-                'Content-Type':   'video/mp4',
-            };
-            res.writeHead(206, head);
-            file.pipe(res);
+                'Content-Type':   contentType,
+                'Cache-Control':  'no-store',
+            });
+            fs.createReadStream(videoPath, { start, end }).pipe(res);
         } else {
-            const head = { 'Content-Length': fileSize, 'Content-Type': 'video/mp4' };
-            res.writeHead(200, head);
+            res.writeHead(200, {
+                'Content-Length': fileSize,
+                'Content-Type':   contentType,
+                'Accept-Ranges':  'bytes',
+                'Cache-Control':  'no-store',
+            });
             fs.createReadStream(videoPath).pipe(res);
         }
     } catch (error) {
