@@ -12,7 +12,8 @@ export const DEFAULT_FILTERS = {
     favorite: false,
     filterMode: 'or',
     sortBy: 'updatedAt',
-    order: 'desc'
+    order: 'desc',
+    durationFilter: '',
 };
 
 // ─── URL serialisation helpers ────────────────────────────────────────────────
@@ -33,6 +34,7 @@ export const filtersToParams = (f) => {
         fm:   f.filterMode && f.filterMode !== DEFAULT_FILTERS.filterMode ? f.filterMode : null,
         sort: f.sortBy    && f.sortBy    !== DEFAULT_FILTERS.sortBy  ? f.sortBy  : null,
         ord:  f.order     && f.order     !== DEFAULT_FILTERS.order   ? f.order   : null,
+        dur:  f.durationFilter || null,
     };
 };
 
@@ -53,6 +55,7 @@ export const paramsToFilters = (params) => {
         filterMode:        params.get('fm')  || DEFAULT_FILTERS.filterMode,
         sortBy:            params.get('sort')|| DEFAULT_FILTERS.sortBy,
         order:             params.get('ord') || DEFAULT_FILTERS.order,
+        durationFilter:    params.get('dur') || '',
     };
 };
 
@@ -123,7 +126,8 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters }) {
         (localFilters.studios?.length || 0)    + (localFilters.studiosExclude?.length || 0) +
         (localFilters.actors?.length || 0)     + (localFilters.actorsExclude?.length || 0) +
         (localFilters.characters?.length || 0) + (localFilters.charactersExclude?.length || 0) +
-        (localFilters.year ? 1 : 0) + (localFilters.favorite ? 1 : 0);
+        (localFilters.year ? 1 : 0) + (localFilters.favorite ? 1 : 0) +
+        (localFilters.durationFilter ? 1 : 0);
 
     const years = Array.from({ length: 50 }, (_, i) => new Date().getFullYear() - i);
 
@@ -131,7 +135,7 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters }) {
 
     return (
         <div className="fixed inset-0 z-50 overflow-hidden bg-slate-900 flex flex-col">
-            <div className="flex flex-col h-full w-full max-w-3xl mx-auto">
+            <div className="flex flex-col h-full w-full mx-auto">
 
                 {/* Header */}
                 <div className="flex-none flex items-center justify-between px-4 sm:px-6 py-4 border-b border-slate-800">
@@ -224,15 +228,41 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters }) {
                                 className="flex-1 px-3 py-2.5 bg-slate-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 text-sm">
                                 <option value="updatedAt">Updated</option>
                                 <option value="createdAt">Added</option>
-                                <option value="title">Title</option>
+                                <option value="title">Title (A–Z)</option>
                                 <option value="year">Year</option>
                                 <option value="views">Views</option>
+                                <option value="duration">Duration</option>
+                                <option value="episodeNumber">Episode #</option>
                             </select>
                             <select value={localFilters.order} onChange={e => handleChange('order', e.target.value)}
                                 className="px-3 py-2.5 bg-slate-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 text-sm">
                                 <option value="desc">↓ Desc</option>
                                 <option value="asc">↑ Asc</option>
                             </select>
+                        </div>
+                    </Section>
+
+                    <Section title="Duration">
+                        <div className="flex gap-2 flex-wrap">
+                            {[
+                                { value: '',       label: 'All',              sub: '' },
+                                { value: 'short',  label: '⚡ Short',          sub: '< 5 min' },
+                                { value: 'medium', label: '🎬 Medium',         sub: '5 ~ 30 min' },
+                                { value: 'long',   label: '🎥 Long',           sub: '> 30 min' },
+                            ].map(opt => (
+                                <button
+                                    key={opt.value}
+                                    onClick={() => handleChange('durationFilter', opt.value)}
+                                    className={`flex-1 min-w-17.5 px-2.5 py-2 rounded-lg text-xs font-medium border-2 transition text-center ${
+                                        localFilters.durationFilter === opt.value
+                                            ? 'border-red-500 bg-red-500/20 text-red-300'
+                                            : 'border-slate-600 bg-slate-700 text-slate-300 hover:bg-slate-600'
+                                    }`}
+                                >
+                                    <div>{opt.label}</div>
+                                    {opt.sub && <div className="text-slate-400 text-[10px]">{opt.sub}</div>}
+                                </button>
+                            ))}
                         </div>
                     </Section>
 
@@ -245,8 +275,9 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters }) {
                         <div className="mb-4 p-3 bg-slate-800 rounded-lg">
                             <p className="text-xs text-slate-400 mb-2">Active filters:</p>
                             <div className="flex flex-wrap gap-1 text-xs">
-                                {localFilters.favorite && <Badge label="❤ Favorites" color="red" />}
-                                {localFilters.year     && <Badge label={`Year: ${localFilters.year}`} color="green" />}
+                                {localFilters.favorite        && <Badge label="❤ Favorites" color="red" />}
+                                {localFilters.year            && <Badge label={`Year: ${localFilters.year}`} color="green" />}
+                                {localFilters.durationFilter  && <Badge label={`Duration: ${localFilters.durationFilter}`} color="green" />}
                                 {['studios', 'actors', 'characters', 'tags'].map(f => (
                                     <React.Fragment key={f}>
                                         {localFilters[f]?.length > 0 && <Badge label={`✓ ${localFilters[f].length} ${f}`} color="green" />}
@@ -323,7 +354,7 @@ function TagSection({ title, field, allItems, localFilters, onCycle }) {
                     placeholder={`Filter ${title.toLowerCase()}…`}
                     className="w-full px-3 py-1.5 bg-slate-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 text-xs mb-2" />
             )}
-            <div className="flex flex-wrap gap-1.5 max-h-44 overflow-y-auto p-2 bg-slate-800 rounded-lg">
+            <div className="flex flex-wrap gap-1.5 max-h-96 overflow-y-auto p-2 bg-slate-800 rounded-lg">
                 {filtered.length === 0 ? (
                     <p className="text-slate-500 text-xs">No results</p>
                 ) : (

@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { generalAPI } from "../../api/api";
-import { Clock, Eye, Film, Heart, Play } from "lucide-react";
+import { Ban, CircleCheck, Clock, Eye, Film, Heart, Play } from "lucide-react";
 import { TagsContainer } from "../series/SeriesCard";
 import { formatDuration, formatViews } from "../../utils/format";
 
@@ -20,6 +20,7 @@ function useSavedProgress(videoId, duration) {
 
 export default function VideoCard({ video, onToggleFavorite, onTagClick, onStudioClick, onCharacterClick, onActorClick }) {
     const progressPct = useSavedProgress(video._id, video.duration);
+    const { hlsStatus } = video;
 
     return (
         <a
@@ -39,6 +40,22 @@ export default function VideoCard({ video, onToggleFavorite, onTagClick, onStudi
                         <Film className="w-10 h-10 sm:w-12 sm:h-12 text-slate-600" />
                     </div>
                 )}
+
+                {/* HLS status badge */}
+                <div className={`absolute top-3.5 left-3.5 rounded-full text-white ${hlsStatus === 'pending' 
+                        ? 'bg-amber-400' 
+                        : hlsStatus === 'ready' 
+                            ? 'bg-green-400' 
+                            : 'bg-red-500'
+                }`}>
+                    {hlsStatus === 'pending' ? (
+                        <Clock className="w-5 h-5" />
+                    ) : hlsStatus === 'ready' ? (
+                        <CircleCheck className="w-5 h-5" />
+                    ) : (
+                        <Ban className="w-5 h-5" />
+                    )}
+                </div>
 
                 {/* Hover overlay */}
                 <div className="absolute inset-0 bg-linear-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200">

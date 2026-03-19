@@ -59,6 +59,26 @@ const transcodeQueue = [];   // { videoId, videoPath, resolve, reject }[]
 let   activeJobs     = 0;
 const activeCommands = new Map(); // videoId (string) → Ffmpeg command | null
 
+// ─── Rich Queue Display State ─────────────────────────────────────────────────
+const jobMeta     = new Map(); // id → { title, thumbnailPath }
+const jobProgress = new Map(); // id → { plannedResolutions[], currentResolution, resolutionPercent, completedResolutions[] }
+const recentlyDone = [];       // last 20: { videoId, title, thumbnailPath, completedAt, success, labels?, error? }
+const queueSseSet  = new Set();
+const _progThrottle = new Map();
+
+function broadcastQueue() {
+    const payload = `data: ${JSON.stringify(getQueueStatus())}\n\n`;
+    for (const res of queueSseSet) { try { res.write(payload); } catch (_) {} }
+}
+
+function emitQueueProgress(videoId) {
+    const id  = videoId.toString();
+    const now = Date.now();
+    if (now - (_progThrottle.get(id) || 0) < 900) return;
+    _progThrottle.set(id, now);
+    broadcastQueue();
+}
+
 // ─── Hardware Encoder Detection ───────────────────────────────────────────────
 // Runs once at startup, caches result for the process lifetime.
 // Priority: NVIDIA NVENC → AMD AMF → Intel QSV → Apple VideoToolbox → CPU
@@ -248,10 +268,27 @@ async function transcodeToHLS(videoPath, videoId) {
 
     const generatedLabels = [];
 
+    // Initialise progress entry so the UI knows what resolutions to expect
+    jobProgress.set(videoId, {
+        plannedResolutions:    rungs.map(r => r.label),
+        currentResolution:     null,
+        resolutionPercent:     0,
+        completedResolutions:  [],
+    });
+    broadcastQueue();
+
     for (const q of rungs) {
         if (!activeCommands.has(videoId)) {
             throw new Error(`Job cancelled for ${videoId}`);
         }
+
+        // Tell the UI which resolution we're starting
+        jobProgress.set(videoId, {
+            ...jobProgress.get(videoId),
+            currentResolution:  q.label,
+            resolutionPercent:  0,
+        });
+        broadcastQueue();
 
         const qDir = path.join(hlsBase, q.label);
         fs.mkdirSync(qDir, { recursive: true });
@@ -274,6 +311,11 @@ async function transcodeToHLS(videoPath, videoId) {
                     `-hls_segment_filename`, path.join(qDir, 'seg%03d.ts'),
                 ])
                 .output(path.join(qDir, 'index.m3u8'))
+                .on('progress', (prog) => {
+                    const pct = Math.min(Math.round(prog.percent || 0), 99);
+                    jobProgress.set(videoId, { ...jobProgress.get(videoId), resolutionPercent: pct });
+                    emitQueueProgress(videoId);
+                })
                 .on('end',   () => resolve())
                 .on('error', (err) => {
                     console.error(`  ✖ [${videoId}] ${q.label} failed via ${hw.label}:`, err.message);
@@ -283,6 +325,15 @@ async function transcodeToHLS(videoPath, videoId) {
             activeCommands.set(videoId, cmd);
             cmd.run();
         });
+
+        // Mark this resolution as fully done
+        const cur = jobProgress.get(videoId) || {};
+        jobProgress.set(videoId, {
+            ...cur,
+            resolutionPercent:   100,
+            completedResolutions: [...(cur.completedResolutions || []), q.label],
+        });
+        broadcastQueue();
 
         generatedLabels.push(q.label);
         console.log(`  ✔ [${videoId}] ${q.label} via ${hw.label}`);
@@ -318,8 +369,14 @@ async function runJob({ videoId, videoPath, resolve, reject }) {
     try {
         await Video.findByIdAndUpdate(videoId, { hlsStatus: 'processing' });
         activeCommands.set(videoId.toString(), null);
+        broadcastQueue(); // job moved from queued → active
 
         const labels = await transcodeToHLS(videoPath, videoId.toString());
+
+        // Record as successful completion
+        const meta = jobMeta.get(videoId.toString()) || {};
+        recentlyDone.push({ videoId: videoId.toString(), ...meta, completedAt: new Date().toISOString(), success: true, labels });
+        if (recentlyDone.length > 20) recentlyDone.shift();
 
         const resolutions = labels.map(label => ({
             quality: label,
@@ -339,32 +396,49 @@ async function runJob({ videoId, videoPath, resolve, reject }) {
         console[cancelled ? 'log' : 'error'](
             `${cancelled ? '⏹' : '❌'} HLS ${cancelled ? 'cancelled' : 'failed'} [${videoId}]: ${err.message}`
         );
+        if (!cancelled) {
+            const meta = jobMeta.get(videoId.toString()) || {};
+            recentlyDone.push({ videoId: videoId.toString(), ...meta, completedAt: new Date().toISOString(), success: false, error: err.message });
+            if (recentlyDone.length > 20) recentlyDone.shift();
+        }
         await Video.findByIdAndUpdate(videoId, {
             hlsStatus: cancelled ? 'none' : 'failed',
         }).catch(() => {});
         reject(err);
     } finally {
-        activeCommands.delete(videoId.toString());
+        const id = videoId.toString();
+        activeCommands.delete(id);
+        jobProgress.delete(id);
+        _progThrottle.delete(id);
         activeJobs--;
+        broadcastQueue(); // job finished
         drainQueue();
     }
 }
 
 function startHLSJob(videoId, videoPath) {
+    const id = videoId.toString();
+    const alreadyQueued = transcodeQueue.some(j => j.videoId.toString() === id);
+    const alreadyActive = activeCommands.has(id);
+
+    if (alreadyQueued || alreadyActive) {
+        console.log(`⏭ [${id}] already queued or processing — skipped`);
+        return Promise.resolve([]);
+    }
+
+    Video.findByIdAndUpdate(videoId, { hlsStatus: 'pending' }).catch(() => {});
+
+    // Best-effort metadata prefetch for the UI (fire-and-forget)
+    if (!jobMeta.has(id)) {
+        Video.findById(videoId, 'title thumbnailPath').lean()
+            .then(v => { if (v) jobMeta.set(id, { title: v.title, thumbnailPath: v.thumbnailPath }); })
+            .catch(() => {});
+    }
+
     return new Promise((resolve, reject) => {
-        const id = videoId.toString();
-        const alreadyQueued = transcodeQueue.some(j => j.videoId.toString() === id);
-        const alreadyActive = activeCommands.has(id);
-
-        if (alreadyQueued || alreadyActive) {
-            console.log(`⏭ [${id}] already queued or processing — skipped`);
-            return resolve([]);
-        }
-
-        Video.findByIdAndUpdate(videoId, { hlsStatus: 'pending' }).catch(() => {});
-
         transcodeQueue.push({ videoId, videoPath, resolve, reject });
         console.log(`📥 [${id}] queued (position ${transcodeQueue.length}, active: ${activeJobs}/${MAX_TRANSCODE_JOBS})`);
+        broadcastQueue(); // notify SSE subscribers of new queue entry
         drainQueue();
     });
 }
@@ -377,6 +451,7 @@ function cancelHLSJob(videoId) {
         const [job] = transcodeQueue.splice(idx, 1);
         job.resolve([]);
         console.log(`🗑 [${id}] removed from queue`);
+        broadcastQueue();
         return true;
     }
 
@@ -384,6 +459,7 @@ function cancelHLSJob(videoId) {
     if (cmd !== undefined) {
         if (cmd) { try { cmd.kill('SIGKILL'); } catch (_) {} }
         console.log(`⏹ [${id}] FFmpeg process killed`);
+        broadcastQueue();
         return true;
     }
 
@@ -391,13 +467,30 @@ function cancelHLSJob(videoId) {
 }
 
 function getQueueStatus() {
+    const processingList = [...activeCommands.keys()].map(id => ({
+        videoId: id,
+        status:  'processing',
+        ...(jobMeta.get(id)     || {}),
+        ...(jobProgress.get(id) || {}),
+    }));
+    const queuedList = transcodeQueue.map((j, i) => ({
+        videoId:  j.videoId.toString(),
+        status:   'queued',
+        position: i + 1,
+        ...(jobMeta.get(j.videoId.toString()) || {}),
+    }));
     return {
         active:    activeJobs,
         maxActive: MAX_TRANSCODE_JOBS,
         queued:    transcodeQueue.length,
+        encoder:   _hwEncoder?.label ?? 'detecting…',
+        // legacy scalar arrays kept for backward compat
         activeIds: [...activeCommands.keys()],
         queuedIds: transcodeQueue.map(j => j.videoId.toString()),
-        encoder:   _hwEncoder?.label ?? 'detecting…',
+        // rich lists for the UI
+        processingList,
+        queuedList,
+        recentlyDone: recentlyDone.slice().reverse().slice(0, 10),
     };
 }
 
@@ -427,6 +520,7 @@ function buildFilterQuery(params, userFavoriteIds = null) {
         tags, tagsExclude, studios, studiosExclude,
         actors, actorsExclude, characters, charactersExclude,
         year, favorite, search, filterMode = 'or', dateFrom,
+        durationFilter,
     } = params;
 
     const op    = filterMode === 'and' ? '$all' : '$in';
@@ -447,6 +541,11 @@ function buildFilterQuery(params, userFavoriteIds = null) {
     if (year)     query.year      = parseInt(year);
     if (dateFrom) query.updatedAt = { $gte: new Date(dateFrom) };
     if (search)   applySmartSearch(query, search);
+
+    // Duration buckets: short < 15 min | medium 15–60 min | long > 60 min
+    if (durationFilter === 'short')  query.duration = { $gt: 0, $lt: 900 };
+    if (durationFilter === 'medium') query.duration = { $gte: 900, $lt: 3600 };
+    if (durationFilter === 'long')   query.duration = { $gte: 3600 };
 
     if (favorite === 'true') {
         query._id = { $in: userFavoriteIds ?? [] };
@@ -506,6 +605,20 @@ router.get('/transcode-queue', requireAdmin, (req, res) => {
     res.json(getQueueStatus());
 });
 
+// ─── GET /api/videos/transcode-queue/stream  [admin SSE] ─────────────────────
+router.get('/transcode-queue/stream', requireAdmin, (req, res) => {
+    res.setHeader('Content-Type',  'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection',    'keep-alive');
+    res.flushHeaders();
+
+    // Immediately push the current state so the client doesn't wait
+    res.write(`data: ${JSON.stringify(getQueueStatus())}\n\n`);
+
+    queueSseSet.add(res);
+    req.on('close', () => queueSseSet.delete(res));
+});
+
 // ─── GET /api/videos/metadata/* ──────────────────────────────────────────────
 async function metaAgg(field) {
     return Video.aggregate([
@@ -529,6 +642,34 @@ router.patch('/:id/view', async (req, res) => {
         res.json({ success: true, views: video.views });
     } catch (error) {
         res.status(500).json({ error: error.message });
+    }
+});
+
+// ─── GET /api/videos/:id/download  ───────────────────────────────────────────
+router.get('/:id/download', async (req, res) => {
+    try {
+        const video = await Video.findById(req.params.id).populate('seriesId', 'title');
+        if (!video) return res.status(404).json({ error: 'Video not found' });
+
+        const src = path.join(uploadDir, video.videoPath);
+        if (!fs.existsSync(src)) return res.status(404).json({ error: 'Video file not found on disk' });
+
+        const san    = (s) => (s || '').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim().slice(0, 100);
+        const series = video.seriesId;
+        const season = String(video.seasonNumber || 1).padStart(2, '0');
+        const ep     = String(video.episodeNumber || 0).padStart(2, '0');
+        const ext    = path.extname(video.videoPath) || '.mp4';
+        const name   = series
+            ? `${san(series.title)} S${season}E${ep} - ${san(video.title)}${ext}`
+            : `${san(video.title)}${ext}`;
+
+        const { size } = fs.statSync(src);
+        res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
+        res.setHeader('Content-Type', 'video/mp4');
+        res.setHeader('Content-Length', size);
+        fs.createReadStream(src).pipe(res);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
 });
 

@@ -14,13 +14,15 @@ import statsRoutes    from './routes/stats.js';
 import authRoutes     from './routes/auth.js';
 import favoritesRoutes from './routes/favorites.js';
 import activityRoutes  from './routes/activity.js';
+import backupRoutes    from './routes/backup.js';
 
 export let uploadDir    = process.env.ABS_UPLOAD_PATH;
 export let thumbnailDir = process.env.ABS_THUMBNAIL_PATH;
+export let backupDir    = process.env.ABS_BACKUP_PATH;
 export const MAX_TRANSCODE_RES = parseInt(process.env.MAX_TRANSCODE_RES || 1080);
 export const MAX_TRANSCODE_JOBS = parseInt(process.env.MAX_TRANSCODE_JOBS || 1);
 
-for (const [label, dir] of [['upload', uploadDir], ['thumbnail', thumbnailDir]]) {
+for (const [label, dir] of [['upload', uploadDir], ['thumbnail', thumbnailDir], ['backup', backupDir]]) {
     if (!fs.existsSync(dir)) {
         try { fs.mkdirSync(dir, { recursive: true }); }
         catch (err) { console.error(`Could not create ${label} directory`, err); process.exit(1); }
@@ -83,6 +85,7 @@ app.use('/api/auth',      authRoutes);
 app.use('/api/favorites', favoritesRoutes);
 app.use('/api/activity',  activityRoutes);
 app.use('/api/stats',     statsRoutes);
+app.use('/api/backup',    backupRoutes);
 app.use('/api/videos',    videoRoutes);
 app.use('/api/series',    seriesRoutes);
 

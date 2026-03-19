@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import {
     BarChart, Bar, LineChart, Line, AreaChart, Area,
     XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell
@@ -6,9 +6,11 @@ import {
 import {
     Film, Layers, Eye, Heart, HardDrive, Clock,
     TrendingUp, Star, Users, Tag, RefreshCw, Activity,
+    Cpu, Archive, StopCircle, Play, AlertTriangle, CheckCircle2, XCircle,
 } from "lucide-react";
-import { statsAPI, generalAPI } from "../api/api";
+import { statsAPI, generalAPI, backupAPI, videoAPI } from "../api/api";
 import { formatViews, formatDuration, formatFileSize } from "../utils/format";
+import { useAuth } from "../context/AuthContext";
 
 const COLORS = ["#ef4444","#f97316","#eab308","#22c55e","#06b6d4","#8b5cf6","#ec4899","#14b8a6","#f59e0b","#3b82f6"];
 
@@ -62,6 +64,7 @@ export default function Dashboard() {
     const [loading,    setLoading]    = useState(true);
     const [error,      setError]      = useState(null);
     const [refreshing, setRefreshing] = useState(false);
+    const { isAdmin } = useAuth();
 
     const load = useCallback(async (isRefresh = false) => {
         isRefresh ? setRefreshing(true) : setLoading(true);
@@ -176,57 +179,50 @@ export default function Dashboard() {
                 </Panel>
             </div>
 
-            {/* ── Row 2: Most favorited videos + Recent uploads ── */}
+            {/* ── Row 2: Top Favorite Videos (full-width list) ── */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <Panel>
-                    <SectionTitle icon={Heart} title="Most Favorited Videos" />
-                    {mostFavoritedVideos.length === 0 ? (
-                        <p className="text-slate-600 text-sm text-center py-8">No favorites yet</p>
-                    ) : (
-                        <ResponsiveContainer width="100%" height={260}>
-                            <BarChart
-                                data={mostFavoritedVideos.map(v => ({
-                                    name:    v.title.slice(0, 22) + (v.title.length > 22 ? "…" : ""),
-                                    hearts:  v.favoriteCount,
-                                    views:   v.views,
-                                }))}
-                                layout="vertical"
-                                margin={{ top: 0, right: 12, left: 0, bottom: 0 }}
-                            >
-                                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" horizontal={false} />
-                                <XAxis type="number" tick={{ fill: "#64748b", fontSize: 10 }} />
-                                <YAxis type="category" dataKey="name" width={130} tick={{ fill: "#94a3b8", fontSize: 10 }} />
-                                <Tooltip content={<ChartTooltip />} />
-                                <Bar dataKey="hearts" name="❤ Favorites" radius={[0, 4, 4, 0]}>
-                                    {mostFavoritedVideos.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                                </Bar>
-                            </BarChart>
-                        </ResponsiveContainer>
-                    )}
-                </Panel>
-
-                <Panel>
-                    <SectionTitle icon={Clock} title="Recent Uploads" />
+                    <SectionTitle icon={Heart} title="Top Favorite Videos" />
                     <div className="space-y-2">
-                        {recentVideos.length === 0 ? (
-                            <p className="text-slate-600 text-sm text-center py-8">No videos yet</p>
-                        ) : recentVideos.map((v, i) => (
-                            <div key={v._id || i} className="flex items-center justify-between gap-3 p-2 rounded-lg bg-slate-800/50 hover:bg-slate-800 transition">
-                                <div className="flex items-center gap-2 min-w-0">
-                                    <span className="text-slate-600 text-xs font-mono w-4 shrink-0">{i + 1}</span>
-                                    <div className="min-w-0">
-                                        <p className="text-white text-sm truncate">{v.title}</p>
-                                        <p className="text-slate-500 text-xs">{new Date(v.createdAt).toLocaleDateString()}</p>
-                                    </div>
-                                </div>
-                                <div className="shrink-0 text-right">
-                                    <p className="text-slate-400 text-xs">{formatDuration(v.duration)}</p>
-                                    <p className="text-slate-600 text-xs">{formatFileSize(v.fileSize)}</p>
+                        {mostFavoritedVideos.length === 0 ? (
+                            <p className="text-slate-600 text-sm text-center py-8">No favorites yet</p>
+                        ) : mostFavoritedVideos.slice(0, 8).map((v, i) => (
+                            <div key={v._id || i} className="flex items-center gap-3 p-2 rounded-lg bg-slate-800/50 hover:bg-slate-800 transition">
+                                <span className="text-2xl font-black text-slate-700 w-8 shrink-0">#{i + 1}</span>
+                                {v.thumbnailPath && (
+                                    <img src={generalAPI.thumbnailUrl(v.thumbnailPath)} alt={v.title} className="w-10 h-10 rounded object-cover shrink-0" />
+                                )}
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-white text-sm truncate">{v.title}</p>
+                                    <p className="text-slate-400 text-xs">
+                                        <span className="text-red-400">{v.favoriteCount} ❤</span>
+                                        {v.views !== undefined && <span className="ml-2">{formatViews(v.views)} views</span>}
+                                    </p>
                                 </div>
                             </div>
                         ))}
                     </div>
                 </Panel>
+
+                {mostFavoritedSeries.length > 0 && (
+                    <Panel>
+                        <SectionTitle icon={Heart} title="Most Favorited Series" />
+                        <div className="space-y-2">
+                            {mostFavoritedSeries.map((s, i) => (
+                                <div key={s._id || i} className="flex items-center gap-3 p-2.5 rounded-lg bg-slate-800/50 hover:bg-slate-800 transition">
+                                    <span className="text-2xl font-black text-slate-700 w-8 shrink-0">#{i + 1}</span>
+                                    {s.thumbnailPath && (
+                                        <img src={generalAPI.thumbnailUrl(s.thumbnailPath)} alt={s.title} className="w-10 h-10 rounded object-cover shrink-0" />
+                                    )}
+                                    <div className="flex-1 min-w-0">
+                                        <p className="text-white text-sm font-medium truncate">{s.title}</p>
+                                        <p className="text-red-400 text-xs">{s.favoriteCount} ❤</p>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </Panel>
+                )}
             </div>
 
             {/* ── Row 3: Top Videos (by views) ── */}
@@ -284,45 +280,413 @@ export default function Dashboard() {
                 ))}
             </div>
 
-            {/* ── Row 5: Most favorited series + Top series by views ── */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                {mostFavoritedSeries.length > 0 && (
-                    <Panel>
-                        <SectionTitle icon={Heart} title="Most Favorited Series" />
-                        <div className="space-y-2">
-                            {mostFavoritedSeries.map((s, i) => (
-                                <div key={s._id || i} className="flex items-center gap-3 p-2.5 rounded-lg bg-slate-800/50 hover:bg-slate-800 transition">
-                                    <span className="text-2xl font-black text-slate-700 w-8 shrink-0">#{i + 1}</span>
-                                    {s.thumbnailPath && (
-                                        <img src={generalAPI.thumbnailUrl(s.thumbnailPath)} alt={s.title} className="w-10 h-10 rounded object-cover shrink-0" />
-                                    )}
-                                    <div className="flex-1 min-w-0">
-                                        <p className="text-white text-sm font-medium truncate">{s.title}</p>
-                                        <p className="text-red-400 text-xs">{s.favoriteCount} ❤</p>
-                                    </div>
+            {/* ── Row 5: Top Series by Views ── */}
+            {topSeries.length > 0 && (
+                <Panel>
+                    <SectionTitle icon={Layers} title="Top Series by Views" />
+                    <div className="space-y-2">
+                        {topSeries.map((s, i) => (
+                            <div key={s._id || i} className="flex items-center gap-3 p-2.5 rounded-lg bg-slate-800/50 hover:bg-slate-800 transition">
+                                <span className="text-2xl font-black text-slate-700 w-8 shrink-0">#{i + 1}</span>
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-white text-sm font-medium truncate">{s.title}</p>
+                                    <p className="text-slate-400 text-xs">{s.episodeCount} ep · <span className="text-red-400">{formatViews(s.totalViews)} views</span></p>
                                 </div>
-                            ))}
+                            </div>
+                        ))}
+                    </div>
+                </Panel>
+            )}
+
+            {/* ── Admin Panels: Transcode Queue + Backup ── */}
+            {isAdmin && (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <TranscodeQueuePanel />
+                    <BackupPanel />
+                </div>
+            )}
+        </div>
+    );
+}
+
+// ─── Transcode Queue Monitor ──────────────────────────────────────────────────
+function TranscodeQueuePanel() {
+    const [queue,   setQueue]   = useState(null);
+    const [loading, setLoading] = useState(true);
+    const esRef = useRef(null);
+
+    useEffect(() => {
+        const connect = () => {
+            if (esRef.current) esRef.current.close();
+            const es = new EventSource(videoAPI.transcodeQueueStreamUrl(), { withCredentials: true });
+            esRef.current = es;
+            es.onmessage = (e) => { try { setQueue(JSON.parse(e.data)); setLoading(false); } catch (_) {} };
+            es.onerror   = () => { es.close(); setTimeout(connect, 5000); };
+        };
+        connect();
+        return () => esRef.current?.close();
+    }, []);
+
+    const isEmpty = !queue || (
+        (queue.processingList?.length || 0) === 0 &&
+        (queue.queuedList?.length     || 0) === 0 &&
+        (queue.recentlyDone?.length   || 0) === 0
+    );
+
+    return (
+        <Panel>
+            {/* Header */}
+            <div className="flex items-center justify-between mb-3">
+                <SectionTitle icon={Cpu} title="Transcode Queue" />
+                <div className="flex items-center gap-2">
+                    {/* Encoder chip */}
+                    {queue?.encoder && (
+                        <span className="text-[10px] px-2 py-0.5 bg-slate-800 text-slate-400 rounded-full border border-slate-700 font-mono hidden sm:inline">
+                            {queue.encoder}
+                        </span>
+                    )}
+                    {/* Live indicator */}
+                    <span className="flex items-center gap-1 text-[10px] text-green-400">
+                        <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+                        LIVE
+                    </span>
+                </div>
+            </div>
+
+            {/* Stat row */}
+            {queue && (
+                <div className="grid grid-cols-3 gap-2 mb-4">
+                    <QueueStatChip label="Active"  value={queue.active}   color="text-amber-400" />
+                    <QueueStatChip label="Queued"  value={queue.queued}   color="text-blue-400"  />
+                    <QueueStatChip label={`Slots`} value={`${queue.active}/${queue.maxActive}`} color="text-slate-300" />
+                </div>
+            )}
+
+            {loading && (
+                <div className="flex items-center gap-2 text-slate-500 text-sm py-6 justify-center">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-amber-400" />
+                    Connecting…
+                </div>
+            )}
+
+            {!loading && isEmpty && (
+                <p className="text-slate-600 text-sm text-center py-8">Queue is empty</p>
+            )}
+
+            {!loading && !isEmpty && (
+                <div className="space-y-3 max-h-115 overflow-y-auto pr-0.5">
+                    {/* ── Processing ── */}
+                    {queue.processingList?.length > 0 && (
+                        <div>
+                            <p className="text-[10px] text-slate-500 uppercase tracking-wider font-medium mb-1.5 px-0.5">
+                                Processing
+                            </p>
+                            <div className="space-y-2">
+                                {queue.processingList.map(item => (
+                                    <TranscodeVideoCard key={item.videoId} item={item} />
+                                ))}
+                            </div>
                         </div>
-                    </Panel>
+                    )}
+
+                    {/* ── Queued ── */}
+                    {queue.queuedList?.length > 0 && (
+                        <div>
+                            <p className="text-[10px] text-slate-500 uppercase tracking-wider font-medium mb-1.5 px-0.5">
+                                Waiting
+                            </p>
+                            <div className="space-y-2">
+                                {queue.queuedList.map(item => (
+                                    <TranscodeVideoCard key={item.videoId} item={item} />
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* ── Recently done ── */}
+                    {queue.recentlyDone?.length > 0 && (
+                        <div>
+                            <p className="text-[10px] text-slate-500 uppercase tracking-wider font-medium mb-1.5 px-0.5">
+                                Recent
+                            </p>
+                            <div className="space-y-2">
+                                {queue.recentlyDone.map(item => (
+                                    <TranscodeVideoCard key={`${item.videoId}-${item.completedAt}`} item={{ ...item, status: 'done' }} />
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+        </Panel>
+    );
+}
+
+function QueueStatChip({ label, value, color }) {
+    return (
+        <div className="bg-slate-800 rounded-lg p-2 text-center">
+            <p className={`text-base font-bold leading-none ${color}`}>{value}</p>
+            <p className="text-slate-500 text-[10px] mt-0.5">{label}</p>
+        </div>
+    );
+}
+
+// ─── Individual transcode job card ────────────────────────────────────────────
+function TranscodeVideoCard({ item }) {
+    const isProcessing = item.status === 'processing';
+    const isQueued     = item.status === 'queued';
+    const isDone       = item.status === 'done';
+
+    const borderClass = isProcessing ? 'border-amber-500/40 bg-amber-500/8'
+                      : isQueued     ? 'border-slate-700    bg-slate-800/50'
+                      : item.success ? 'border-green-500/40 bg-green-500/8'
+                                     : 'border-red-500/40   bg-red-500/8';
+
+    // Overall percent across all planned resolutions
+    const plannedCount = item.plannedResolutions?.length || 0;
+    const doneCount    = item.completedResolutions?.length || 0;
+    const resPct       = item.resolutionPercent || 0;
+    const overallPct   = plannedCount > 0
+        ? Math.round(((doneCount * 100) + (doneCount < plannedCount ? resPct : 0)) / plannedCount)
+        : 0;
+
+    return (
+        <div className={`flex gap-2.5 p-2.5 rounded-xl border transition-all ${borderClass}`}>
+            {/* Thumbnail */}
+            <div className="relative w-16 h-10 rounded-lg overflow-hidden shrink-0 bg-slate-800">
+                {item.thumbnailPath ? (
+                    <img
+                        src={generalAPI.thumbnailUrl(item.thumbnailPath)}
+                        alt={item.title}
+                        className="w-full h-full object-cover"
+                    />
+                ) : (
+                    <div className="w-full h-full flex items-center justify-center">
+                        <Film className="w-4 h-4 text-slate-600" />
+                    </div>
+                )}
+                {/* Status overlay dot */}
+                <div className={`absolute top-1 left-1 w-2 h-2 rounded-full border border-black/40 ${
+                    isProcessing         ? 'bg-amber-400 animate-pulse'
+                    : isQueued           ? 'bg-slate-500'
+                    : item.success       ? 'bg-green-500'
+                                         : 'bg-red-500'
+                }`} />
+            </div>
+
+            {/* Info column */}
+            <div className="flex-1 min-w-0">
+                {/* Title + right badge */}
+                <div className="flex items-start justify-between gap-1 mb-1">
+                    <p className="text-xs font-semibold text-white truncate leading-snug">
+                        {item.title || `…${item.videoId?.slice(-8)}`}
+                    </p>
+                    <span className={`shrink-0 text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase leading-none ${
+                        isProcessing         ? 'bg-amber-500/20 text-amber-300'
+                        : isQueued           ? 'bg-slate-700 text-slate-400'
+                        : item.success       ? 'bg-green-500/20 text-green-300'
+                                             : 'bg-red-500/20 text-red-300'
+                    }`}>
+                        {isProcessing ? 'Encoding' : isQueued ? `#${item.position}` : item.success ? 'Done' : 'Failed'}
+                    </span>
+                </div>
+
+                {/* Processing: resolution segments + overall bar */}
+                {isProcessing && (
+                    <>
+                        {/* Current resolution + pct */}
+                        <div className="flex items-center gap-1.5 mb-1.5">
+                            <span className="text-[10px] text-amber-400 font-mono font-bold">
+                                {item.currentResolution || '…'}
+                            </span>
+                            {resPct > 0 && (
+                                <span className="text-[10px] text-amber-300/70">{resPct}%</span>
+                            )}
+                            <span className="text-[10px] text-slate-600 ml-auto">{overallPct}% overall</span>
+                        </div>
+
+                        {/* Per-resolution segment bars */}
+                        {item.plannedResolutions?.length > 0 && (
+                            <div className="flex gap-1">
+                                {item.plannedResolutions.map(res => {
+                                    const done   = item.completedResolutions?.includes(res);
+                                    const active = item.currentResolution === res && !done;
+                                    return (
+                                        <div key={res} className="flex-1 min-w-0">
+                                            <div className="flex justify-center mb-0.5">
+                                                <span className="text-[8px] text-slate-500 font-mono">{res}</span>
+                                            </div>
+                                            <div className="h-1.5 rounded-full bg-slate-700 overflow-hidden">
+                                                <div
+                                                    className={`h-full rounded-full transition-all duration-500 ${
+                                                        done   ? 'bg-green-500'
+                                                        : active ? 'bg-amber-400'
+                                                               : ''
+                                                    }`}
+                                                    style={{ width: done ? '100%' : active ? `${resPct}%` : '0%' }}
+                                                />
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </>
                 )}
 
-                {topSeries.length > 0 && (
-                    <Panel>
-                        <SectionTitle icon={Layers} title="Top Series by Views" />
-                        <div className="space-y-2">
-                            {topSeries.map((s, i) => (
-                                <div key={s._id || i} className="flex items-center gap-3 p-2.5 rounded-lg bg-slate-800/50 hover:bg-slate-800 transition">
-                                    <span className="text-2xl font-black text-slate-700 w-8 shrink-0">#{i + 1}</span>
-                                    <div className="flex-1 min-w-0">
-                                        <p className="text-white text-sm font-medium truncate">{s.title}</p>
-                                        <p className="text-slate-400 text-xs">{s.episodeCount} ep · <span className="text-red-400">{formatViews(s.totalViews)} views</span></p>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    </Panel>
+                {/* Queued: simple label */}
+                {isQueued && (
+                    <p className="text-[10px] text-slate-500">Waiting for an open slot…</p>
+                )}
+
+                {/* Done: labels or error */}
+                {isDone && item.success && (
+                    <div className="flex flex-wrap gap-1 mt-0.5">
+                        {(item.labels || []).map(l => (
+                            <span key={l} className="text-[9px] px-1.5 py-0.5 bg-green-500/15 text-green-400 rounded font-mono">{l}</span>
+                        ))}
+                        {item.completedAt && (
+                            <span className="text-[9px] text-slate-600 ml-auto self-end">
+                                {new Date(item.completedAt).toLocaleTimeString()}
+                            </span>
+                        )}
+                    </div>
+                )}
+                {isDone && !item.success && (
+                    <p className="text-[10px] text-red-400 truncate mt-0.5">{item.error || 'Transcoding failed'}</p>
                 )}
             </div>
         </div>
+    );
+}
+
+// ─── Backup Panel ─────────────────────────────────────────────────────────────
+const STATUS_META = {
+    idle:             { icon: Archive,       color: 'text-slate-400',  label: 'Ready to backup' },
+    running:          { icon: Archive,       color: 'text-blue-400',   label: 'Backup running…' },
+    stopped:          { icon: StopCircle,    color: 'text-amber-400',  label: 'Stopped by user' },
+    done:             { icon: CheckCircle2,  color: 'text-green-400',  label: 'Backup complete' },
+    done_with_errors: { icon: AlertTriangle, color: 'text-amber-400',  label: 'Done with errors' },
+    error:            { icon: XCircle,       color: 'text-red-400',    label: 'Backup error' },
+};
+
+function BackupPanel() {
+    const [bk, setBk]         = useState({ status: 'idle', total: 0, done: 0, failed: 0, skipped: 0, errors: [], currentFile: null, startedAt: null, finishedAt: null });
+    const [starting, setStarting] = useState(false);
+    const [stopping, setStopping] = useState(false);
+    const esRef  = useRef(null);
+
+    // Connect SSE
+    useEffect(() => {
+        const connect = () => {
+            if (esRef.current) esRef.current.close();
+            const es = new EventSource(backupAPI.statusUrl(), { withCredentials: true });
+            esRef.current = es;
+            es.onmessage = (e) => { try { setBk(JSON.parse(e.data)); } catch { } };
+            es.onerror   = () => { es.close(); setTimeout(connect, 5000); };
+        };
+        connect();
+        return () => esRef.current?.close();
+    }, []);
+
+    const handleStart = async () => {
+        setStarting(true);
+        try { await backupAPI.start(); } catch (e) { alert(e?.response?.data?.error || 'Failed to start backup'); }
+        finally { setStarting(false); }
+    };
+
+    const handleStop = async () => {
+        setStopping(true);
+        try { await backupAPI.stop(); } catch { }
+        finally { setStopping(false); }
+    };
+
+    const pct     = bk.total > 0 ? Math.round((bk.done / bk.total) * 100) : 0;
+    const meta    = STATUS_META[bk.status] || STATUS_META.idle;
+    const StatusIcon = meta.icon;
+    const isRunning  = bk.status === 'running';
+
+    return (
+        <Panel>
+            <div className="flex items-center justify-between mb-4">
+                <SectionTitle icon={Archive} title="Backup" />
+                <StatusIcon className={`w-4 h-4 ${meta.color} ${isRunning ? 'animate-pulse' : ''}`} />
+            </div>
+
+            {/* Status row */}
+            <div className={`flex items-center gap-2 text-sm mb-4 ${meta.color}`}>
+                <span className="font-medium">{meta.label}</span>
+            </div>
+
+            {/* Progress bar (visible when running or after) */}
+            {bk.total > 0 && (
+                <div className="mb-4">
+                    <div className="flex justify-between text-xs text-slate-400 mb-1">
+                        <span>{bk.done} / {bk.total} files</span>
+                        <span>{pct}%</span>
+                    </div>
+                    <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
+                        <div
+                            className={`h-full rounded-full transition-all duration-300 ${
+                                bk.status === 'done' ? 'bg-green-500' :
+                                bk.status === 'error' || bk.status === 'stopped' ? 'bg-amber-500' : 'bg-blue-500'
+                            }`}
+                            style={{ width: `${pct}%` }}
+                        />
+                    </div>
+                    <div className="flex gap-4 mt-1.5 text-xs text-slate-500">
+                        {bk.skipped > 0 && <span className="text-slate-400">↷ {bk.skipped} skipped</span>}
+                        {bk.failed  > 0 && <span className="text-red-400">✕ {bk.failed} failed</span>}
+                    </div>
+                </div>
+            )}
+
+            {/* Current file */}
+            {bk.currentFile && (
+                <p className="text-xs text-slate-500 truncate mb-3 font-mono bg-slate-800 px-2 py-1 rounded">
+                    {bk.currentFile}
+                </p>
+            )}
+
+            {/* Timestamps */}
+            {bk.startedAt && (
+                <div className="text-xs text-slate-500 mb-3 space-y-0.5">
+                    <p>Started: {new Date(bk.startedAt).toLocaleTimeString()}</p>
+                    {bk.finishedAt && <p>Finished: {new Date(bk.finishedAt).toLocaleTimeString()}</p>}
+                </div>
+            )}
+
+            {/* Errors */}
+            {bk.errors?.length > 0 && (
+                <div className="mb-3 max-h-24 overflow-y-auto space-y-1">
+                    {bk.errors.map((e, i) => (
+                        <p key={i} className="text-xs text-red-400 bg-red-500/10 px-2 py-1 rounded">{e}</p>
+                    ))}
+                </div>
+            )}
+
+            {/* Action buttons */}
+            <div className="flex gap-2 mt-2">
+                {!isRunning ? (
+                    <button
+                        onClick={handleStart}
+                        disabled={starting}
+                        className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition"
+                    >
+                        <Play className="w-3.5 h-3.5" fill="currentColor" />
+                        {starting ? 'Starting…' : bk.status === 'idle' ? 'Start Backup' : 'Run Again'}
+                    </button>
+                ) : (
+                    <button
+                        onClick={handleStop}
+                        disabled={stopping}
+                        className="flex items-center gap-1.5 px-3 py-2 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition"
+                    >
+                        <StopCircle className="w-3.5 h-3.5" />
+                        {stopping ? 'Stopping…' : 'Stop Backup'}
+                    </button>
+                )}
+            </div>
+        </Panel>
     );
 }

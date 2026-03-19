@@ -4,11 +4,11 @@ import toast from "react-hot-toast";
 import {
     ChevronLeft, ChevronRight, ChevronUp,
     Film, Filter, Layers, Plus, Search,
-    ArrowLeft, TrendingUp, Clock, Flame,
-    Heart, LayoutDashboard, User as UserIcon, Crown, Users, X,
+    TrendingUp, Clock, Flame,
+    LayoutDashboard, User as UserIcon, Crown, Users, X,
 } from "lucide-react";
 import SeriesCard from "./series/SeriesCard.jsx";
-import FilterSidebar, { DEFAULT_FILTERS, cycleItem, filtersToParams, paramsToFilters } from "./FilterSidebar";
+import FilterSidebar, { cycleItem, filtersToParams, paramsToFilters } from "./FilterSidebar";
 import Pagination from "./Pagination";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import Dashboard from "./Dashboard";
@@ -21,9 +21,9 @@ import VideoCard from "./videos/VideoCard.jsx";
 const daysAgoISO = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString(); };
 
 const SECTIONS = [
+    { id: 'newest',        title: 'New Arrivals',        icon: Clock,       getParams: () => ({ sortBy: 'createdAt', order: 'desc' }) },
     { id: 'trending_week', title: 'Trending This Week', icon: TrendingUp, getParams: () => ({ sortBy: 'views', order: 'desc', dateFrom: daysAgoISO(7) }) },
     { id: 'mostViewed',    title: 'Most Viewed',         icon: Flame,       getParams: () => ({ sortBy: 'views', order: 'desc' }) },
-    { id: 'newest',        title: 'New Arrivals',        icon: Clock,       getParams: () => ({ sortBy: 'createdAt', order: 'desc' }) },
 ];
 
 // Admin-only views beyond the default series browser
@@ -154,7 +154,7 @@ const SearchBox = forwardRef(({ searchTerm, setSearchTerm, onCommit, onBlur }, r
 });
 
 // ─── UserAvatarButton ─────────────────────────────────────────────────────────
-function UserAvatarButton({ user, isAdmin, onClick }) {
+export function UserAvatarButton({ user, isAdmin, onClick }) {
     return (
         <button onClick={onClick}
             className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-slate-800 transition group">
@@ -220,7 +220,7 @@ function Home() {
         f.studios?.length > 0 || f.studiosExclude?.length > 0 ||
         f.actors?.length > 0 || f.actorsExclude?.length > 0 ||
         f.characters?.length > 0 || f.charactersExclude?.length > 0 ||
-        f.year || f.favorite || f.search,
+        f.year || f.favorite || f.search || f.durationFilter,
     []);
 
     const buildApiParams = useCallback((extra = {}) => ({
@@ -234,11 +234,12 @@ function Home() {
         actorsExclude:     filters.actorsExclude?.join(',')  || undefined,
         characters:        filters.characters?.join(',')     || undefined,
         charactersExclude: filters.charactersExclude?.join(',') || undefined,
-        year:              filters.year     || undefined,
-        favorite:          filters.favorite || undefined,
+        year:              filters.year           || undefined,
+        favorite:          filters.favorite       || undefined,
         filterMode:        filters.filterMode,
         sortBy:            filters.sortBy,
         order:             filters.order,
+        durationFilter:    filters.durationFilter || undefined,
         ...extra,
     }), [filters]);
 
@@ -301,7 +302,7 @@ function Home() {
         const fp = filtersToParams(nf);
         setSearchParams(prev => {
             const next = new URLSearchParams(prev);
-            ['q','tags','txc','stu','sxc','act','axc','chr','cxc','yr','fav','fm','sort','ord'].forEach(k => next.delete(k));
+            ['q','tags','txc','stu','sxc','act','axc','chr','cxc','yr','fav','fm','sort','ord','dur'].forEach(k => next.delete(k));
             Object.entries(fp).forEach(([k, v]) => { if (v != null) next.set(k, v); });
             const nextMode = hasActiveFilters(nf) ? 'filtered' : 'home';
             next.set('mode', nextMode);
@@ -348,7 +349,7 @@ function Home() {
         const fp = filtersToParams(newFilters);
         setSearchParams(prev => {
             const next = new URLSearchParams(prev);
-            ['q','tags','txc','stu','sxc','act','axc','chr','cxc','yr','fav','fm','sort','ord'].forEach(k => next.delete(k));
+            ['q','tags','txc','stu','sxc','act','axc','chr','cxc','yr','fav','fm','sort','ord','dur'].forEach(k => next.delete(k));
             Object.entries(fp).forEach(([k, v]) => { if (v != null) next.set(k, v); });
             next.set('mode', hasActiveFilters(newFilters) ? 'filtered' : 'home');
             next.delete('section');
@@ -369,9 +370,10 @@ function Home() {
             [field]: (filters[field] || []).filter?.((x) => x !== value) ?? filters[field],
             [`${field}Exclude`]: (filters[`${field}Exclude`] || []).filter?.((x) => x !== value),
         };
-        if (field === 'year')     { updated.year     = ''; }
-        if (field === 'favorite') { updated.favorite = false; }
-        if (field === 'search')   { updated.search   = ''; setSearchTerm(''); }
+        if (field === 'year')           { updated.year           = ''; }
+        if (field === 'favorite')       { updated.favorite       = false; }
+        if (field === 'search')         { updated.search         = ''; setSearchTerm(''); }
+        if (field === 'durationFilter') { updated.durationFilter = ''; }
         handleFilterChange(updated);
     };
 
@@ -384,7 +386,7 @@ function Home() {
         (filters.studios?.length || 0) + (filters.studiosExclude?.length || 0) +
         (filters.actors?.length || 0) + (filters.actorsExclude?.length || 0) +
         (filters.characters?.length || 0) + (filters.charactersExclude?.length || 0) +
-        (filters.year ? 1 : 0) + (filters.favorite ? 1 : 0);
+        (filters.year ? 1 : 0) + (filters.favorite ? 1 : 0) + (filters.durationFilter ? 1 : 0);
 
     const hasFilters = filterCount > 0 || !!filters.search;
     const hasPendingSearch = searchTerm !== (filters.search || '');
@@ -412,20 +414,12 @@ function Home() {
             <header className="sticky top-0 z-30 bg-slate-950/95 backdrop-blur-sm border-b border-slate-800">
                 <div className="mx-auto px-3 sm:px-4 pt-3 pb-2">
                     <div className="flex items-center justify-between gap-2">
-                        <h1
+                        <a
                             className="text-2xl sm:text-3xl font-bold text-red-500 cursor-pointer hover:text-red-400 transition shrink-0"
-                            onClick={() => {
-                                setSearchTerm('');
-                                setSearchParams(prev => {
-                                    const next = new URLSearchParams(prev);
-                                    ['q','tags','txc','stu','sxc','act','axc','chr','cxc','yr','fav','fm','sort','ord',
-                                     'mode','section','seriesPage','view'].forEach(k => next.delete(k));
-                                    return next;
-                                }, { replace: false });
-                            }}
+                            href="/"
                         >
                             VIBEFLIX
-                        </h1>
+                        </a>
 
                         <div className="flex items-center gap-1.5 sm:gap-2 justify-end">
                             {!isAdminView && (
@@ -466,9 +460,10 @@ function Home() {
                                 )}
                                 {hasFilters && (
                                     <div className="flex flex-wrap gap-1 mt-1 max-h-20 overflow-y-auto">
-                                        {filters.search   && <FilterPill label={`"${filters.search}"`}    onRemove={() => handleRemoveFilter('search')}   color="slate" />}
-                                        {filters.favorite && <FilterPill label="❤ Favorites"              onRemove={() => handleRemoveFilter('favorite')} color="red"   />}
-                                        {filters.year     && <FilterPill label={`Year: ${filters.year}`}  onRemove={() => handleRemoveFilter('year')}     color="green" />}
+                                    {filters.search        && <FilterPill label={`"${filters.search}"`}    onRemove={() => handleRemoveFilter('search')}         color="slate" />}
+                                        {filters.favorite      && <FilterPill label="❤ Favorites"              onRemove={() => handleRemoveFilter('favorite')}       color="red"   />}
+                                        {filters.year          && <FilterPill label={`Year: ${filters.year}`}  onRemove={() => handleRemoveFilter('year')}           color="green" />}
+                                        {filters.durationFilter && <FilterPill label={`⏱ ${filters.durationFilter}`} onRemove={() => handleRemoveFilter('durationFilter')} color="green" />}
                                         {['studios','actors','characters','tags'].map(field => (
                                             <Fragment key={field}>
                                                 {(filters[field] || []).map(v => <FilterPill key={`inc-${v}`} label={`✓ ${v}`} onRemove={() => handleRemoveFilter(field, v)} color="green" />)}

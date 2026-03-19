@@ -5,12 +5,16 @@ import toast from "react-hot-toast";
 import VideoPlayer from "./VideoPlayer";
 import {
     ArrowLeft, Building, Calendar, ChevronDown, ChevronUp,
-    Clock, Cpu, Edit, Eye, Film, Heart, Layers, Play, Plus, Tag, Trash2, Users, UserCircle
+    Clock, Cpu, Download, Edit, Eye, Film, Heart, Layers, Play, Plus, Tag, Trash2, Users, UserCircle,
+    CircleCheck,
+    Ban
 } from "lucide-react";
 
 import { MetaChip } from "../series/SeriesCard";
 import { formatDuration, formatFileSize } from "../../utils/format";
 import { useAuth } from "../../context/AuthContext";
+import { UserAvatarButton } from "../Home";
+import UserProfile from "../auth/UserProfile";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SeriesDetail — shown when navigating to /series/:id
@@ -30,6 +34,13 @@ export function SeriesDetail() {
     // ── Collapsible episode list ──────────────────────────────────────────────
     const [episodesCollapsed, setEpisodesCollapsed] = useState(false);
 
+    // ── Episode sort & playback options ──────────────────────────────────────
+    const [epSortBy, setEpSortBy]   = useState('default');   // default | title | duration | favorites | views
+    const [epOrder,  setEpOrder]    = useState('asc');        // asc | desc
+    const [autoPlay, setAutoPlay]   = useState(false);
+
+    const [showProfile, setShowProfile] = useState(false);
+
     // ── Player height tracking for YouTube-style sidebar ─────────────────────
     const playerContainerRef = useRef(null);
     const [playerHeight, setPlayerHeight] = useState(null);
@@ -37,7 +48,7 @@ export function SeriesDetail() {
     const activeEpisodeRef = useRef(null);
     const episodeListRef   = useRef(null);
 
-    const { isAdmin } = useAuth();
+    const { user, loading: authLoading, isAdmin } = useAuth();
 
     const fetchData = useCallback(async () => {
         try {
@@ -229,6 +240,24 @@ export function SeriesDetail() {
     const handlePrevEpisode = () => { if (currentIdx > 0) handleEpisodeSelect(episodes[currentIdx - 1]); };
     const handleNextEpisode = () => { if (currentIdx < episodes.length - 1) handleEpisodeSelect(episodes[currentIdx + 1]); };
 
+    // ── Per-season sorted episodes ────────────────────────────────────────────
+    const sortedSeasonEpisodes = React.useMemo(() => {
+        const list = [...(episodesBySeason[selectedSeason] || [])];
+        if (epSortBy === 'default') {
+            list.sort((a, b) => (a.episodeNumber || 0) - (b.episodeNumber || 0));
+        } else if (epSortBy === 'title') {
+            list.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+        } else if (epSortBy === 'duration') {
+            list.sort((a, b) => (a.duration || 0) - (b.duration || 0));
+        } else if (epSortBy === 'views') {
+            list.sort((a, b) => (a.views || 0) - (b.views || 0));
+        } else if (epSortBy === 'favorites') {
+            list.sort((a, b) => (a.isFavorite ? 1 : 0) - (b.isFavorite ? 1 : 0));
+        }
+        if (epOrder === 'desc') list.reverse();
+        return list;
+    }, [episodesBySeason, selectedSeason, epSortBy, epOrder]);
+
     if (loading) return <LoadingScreen />;
     if (!series) return <NotFoundScreen message="Series not found" />;
 
@@ -247,7 +276,7 @@ export function SeriesDetail() {
                     onNext={currentIdx < episodes.length - 1 ? handleNextEpisode : null}
                     hasPrevious={currentIdx > 0}
                     hasNext={currentIdx < episodes.length - 1}
-                    autoPlayNext={false}
+                    autoPlayNext={autoPlay}
                     onView={() => videoAPI.trackView(currentEpisode._id)}
                 />
             ) : series.thumbnailPath ? (
@@ -266,7 +295,7 @@ export function SeriesDetail() {
             className="bg-slate-900 rounded-xl border border-slate-800 overflow-hidden flex flex-col"
             style={isXl
                 ? { maxHeight: playerHeight ? `${playerHeight}px` : '480px' }
-                : { maxHeight: '480px' }}
+                : { maxHeight: '560px' }}
         >
             {/* Header — clickable to collapse/expand */}
             <button
@@ -288,7 +317,7 @@ export function SeriesDetail() {
                 {!episodesCollapsed && seasons.length > 1 && (
                     <div
                         className="flex gap-1.5 mt-2 overflow-x-auto pb-0.5 scrollbar-none"
-                        onClick={e => e.stopPropagation()} // prevent header toggle when clicking tabs
+                        onClick={e => e.stopPropagation()}
                     >
                         {seasons.map(s => (
                             <button
@@ -304,6 +333,51 @@ export function SeriesDetail() {
                     </div>
                 )}
             </button>
+
+            {/* Sort + Playback control bar */}
+            {!episodesCollapsed && episodes.length > 0 && (
+                <div
+                    className="flex-none flex items-center gap-1.5 px-3 py-2 bg-slate-800/60 border-b border-slate-800 overflow-x-auto scrollbar-none"
+                    onClick={e => e.stopPropagation()}
+                >
+                    {/* Sort select */}
+                    <select
+                        value={epSortBy}
+                        onChange={e => setEpSortBy(e.target.value)}
+                        className="text-xs bg-slate-700 text-slate-300 rounded px-1.5 py-1 border border-slate-600 focus:outline-none focus:ring-1 focus:ring-red-500 shrink-0"
+                        title="Sort episodes by"
+                    >
+                        <option value="default">Ep #</option>
+                        <option value="title">Title</option>
+                        <option value="duration">Duration</option>
+                        <option value="views">Views</option>
+                        <option value="favorites">Favorites</option>
+                    </select>
+                    {/* Order toggle */}
+                    <button
+                        onClick={() => setEpOrder(v => v === 'asc' ? 'desc' : 'asc')}
+                        className="text-xs bg-slate-700 text-slate-300 px-1.5 py-1 rounded border border-slate-600 hover:bg-slate-600 transition shrink-0"
+                        title="Toggle order"
+                    >
+                        {epOrder === 'asc' ? '↑ Asc' : '↓ Desc'}
+                    </button>
+                    {/* Divider */}
+                    <div className="w-px h-4 bg-slate-600 shrink-0" />
+                    {/* Autoplay toggle */}
+                    <button
+                        onClick={() => setAutoPlay(v => !v)}
+                        className={`flex items-center gap-1 text-xs px-1.5 py-1 rounded border transition shrink-0 ${
+                            autoPlay
+                                ? 'bg-red-500/20 border-red-500/50 text-red-300'
+                                : 'bg-slate-700 border-slate-600 text-slate-400 hover:bg-slate-600'
+                        }`}
+                        title="Auto-play next episode"
+                    >
+                        <Play className="w-2.5 h-2.5" fill={autoPlay ? 'currentColor' : 'none'} />
+                        Auto
+                    </button>
+                </div>
+            )}
 
             {/* Body — hidden when collapsed */}
             {!episodesCollapsed && (
@@ -322,7 +396,7 @@ export function SeriesDetail() {
                     </div>
                 ) : (
                     <div ref={episodeListRef} className="flex-1 min-h-0 overflow-y-auto p-2 space-y-1">
-                        {(episodesBySeason[selectedSeason] || []).map(ep => (
+                        {sortedSeasonEpisodes.map(ep => (
                             <EpisodeRow
                                 key={ep._id}
                                 episode={ep}
@@ -362,6 +436,15 @@ export function SeriesDetail() {
                             </button>
                         </>
                     )}
+                    <a
+                        href={videoAPI.getDownloadUrl(currentEpisode._id)}
+                        download
+                        className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-lg transition"
+                        title="Download episode"
+                        onClick={e => e.stopPropagation()}
+                    >
+                        <Download className="w-4 h-4" />
+                    </a>
                     <button onClick={handleToggleFavoriteVideo}
                         className={`p-2 rounded-lg transition ${currentEpisode.isFavorite ? 'bg-red-500 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}
                         title="Toggle favorite">
@@ -425,15 +508,16 @@ export function SeriesDetail() {
 
             {/* ── Header ──────────────────────────────────────────────────────── */}
             <header className="sticky top-0 z-30 bg-slate-950/95 backdrop-blur-sm border-b border-slate-800">
-                <div className="mx-auto px-3 py-3 sm:p-4 flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-                        <button onClick={() => navigate('/')} className="p-2 hover:bg-slate-800 rounded-lg transition shrink-0">
-                            <ArrowLeft className="w-5 h-5 sm:w-6 sm:h-6" />
-                        </button>
-                        <Layers className="w-4 h-4 sm:w-5 sm:h-5 text-red-500 shrink-0" />
-                        <h1 className="text-base sm:text-xl font-bold truncate">{series.title}</h1>
+                <div className="flex items-center justify-between gap-2 mx-auto px-3 sm:px-4 pt-3 pb-2">
+                        <a
+                            className="text-2xl sm:text-3xl font-bold text-red-500 cursor-pointer hover:text-red-400 transition shrink-0"
+                            href="/"
+                        >
+                            VIBEFLIX
+                        </a>
+
+                        {user && <UserAvatarButton user={user} isAdmin={isAdmin} onClick={() => setShowProfile(true)} />}
                     </div>
-                </div>
             </header>
 
             <main className="mx-auto px-3 sm:px-4 py-4 sm:py-6">
@@ -464,6 +548,8 @@ export function SeriesDetail() {
                 )}
 
             </main>
+
+            <UserProfile isOpen={showProfile} onClose={() => setShowProfile(false)} />
         </div>
     );
 }
@@ -535,12 +621,21 @@ const EpisodeRow = forwardRef(function EpisodeRow({ episode, isActive, onSelect,
                     </div>
                 )}
 
-                <div className={`w-1.5 h-1.5 rounded-full absolute top-1 left-1 border border-slate-300 ${hlsStatus === 'pending' || hlsStatus === 'processing' 
-                    ? 'bg-amber-400' 
-                    : hlsStatus === 'ready' 
-                        ? 'bg-green-400' 
-                        : 'bg-red-500'
-                }`} />
+                {/* HLS status badge */}
+                <div className={`absolute top-1.5 left-1.5 rounded-full text-white ${hlsStatus === 'pending' 
+                        ? 'bg-amber-400' 
+                        : hlsStatus === 'ready' 
+                            ? 'bg-green-400' 
+                            : 'bg-red-500'
+                }`}>
+                    {hlsStatus === 'pending' ? (
+                        <Clock className="w-3.5 h-3.5" />
+                    ) : hlsStatus === 'ready' ? (
+                        <CircleCheck className="w-3.5 h-3.5" />
+                    ) : (
+                        <Ban className="w-3.5 h-3.5" />
+                    )}
+                </div>
             </div>
 
             {/* Info */}

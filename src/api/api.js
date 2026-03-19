@@ -95,6 +95,10 @@ export const videoAPI = {
     trackView: async (id) =>
         (await axios.patch(`${API_URL}/api/videos/${id}/view`)).data,
 
+    // Returns a plain URL the browser can navigate to for direct download
+    getDownloadUrl: (id) =>
+        `${API_URL}/api/videos/${id}/download`,
+
     // ── HLS ───────────────────────────────────────────────────────────────────
     // Returns a plain URL string (not a promise) — passed directly as <video src>
     getHlsUrl: (id) =>
@@ -115,6 +119,9 @@ export const videoAPI = {
     // Admin: get current queue status { active, maxActive, queued, activeIds, queuedIds }
     getTranscodeQueue: async () =>
         (await axios.get(`${API_URL}/api/videos/transcode-queue`)).data,
+
+    // Admin: SSE stream URL for real-time queue updates
+    transcodeQueueStreamUrl: () => `${API_URL}/api/videos/transcode-queue/stream`,
 
     // ── Metadata ──────────────────────────────────────────────────────────────
     getTags:       async () => (await axios.get(`${API_URL}/api/videos/metadata/tags`)).data,
@@ -163,4 +170,13 @@ export const seriesAPI = {
 // ─── Stats API ────────────────────────────────────────────────────────────────
 export const statsAPI = {
     getStats: async () => (await axios.get(`${API_URL}/api/stats`)).data,
+};
+
+// ─── Backup API (admin only) ──────────────────────────────────────────────────
+export const backupAPI = {
+    getState:    async ()  => (await axios.get(`${API_URL}/api/backup/state`)).data,
+    start:       async ()  => (await axios.post(`${API_URL}/api/backup/start`)).data,
+    stop:        async ()  => (await axios.post(`${API_URL}/api/backup/stop`)).data,
+    /** Returns an EventSource URL for SSE progress stream */
+    statusUrl:   ()        => `${API_URL}/api/backup/status`,
 };
