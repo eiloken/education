@@ -362,7 +362,7 @@ export function SeriesDetail() {
             {/* Sort + Playback control bar */}
             {!episodesCollapsed && episodes.length > 0 && (
                 <div
-                    className="flex-none flex items-center gap-1.5 px-3 py-2 bg-slate-800/60 border-b border-slate-800 overflow-x-auto scrollbar-none"
+                    className="flex-none flex items-center flex-wrap gap-1.5 px-3 py-2 bg-slate-800/60 border-b border-slate-800 overflow-x-auto scrollbar-none"
                     onClick={e => e.stopPropagation()}
                 >
                     {/* Sort select */}
@@ -378,6 +378,7 @@ export function SeriesDetail() {
                         <option value="views">Views</option>
                         <option value="favorites">Favorites</option>
                     </select>
+
                     {/* Order toggle */}
                     <button
                         onClick={() => setEpOrder(v => v === 'asc' ? 'desc' : 'asc')}
@@ -386,29 +387,28 @@ export function SeriesDetail() {
                     >
                         {epOrder === 'asc' ? '↑ Asc' : '↓ Desc'}
                     </button>
-                    {/* Divider */}
-                    <div className="w-px h-4 bg-slate-600 shrink-0" />
+
                     {/* HLS / Streaming filter */}
                     {[
-                        { value: '',               label: 'All' },
-                        { value: 'transcoded',     label: '✅ HLS' },
-                        { value: 'not_transcoded', label: '⚡ Raw' },
+                        { value: '',               label: 'All', selectedClass: 'bg-slate-700 text-slate-400 hover:bg-slate-600' },
+                        { value: 'transcoded',     label: 'HLS', Icon: CircleCheck, selectedClass: 'bg-green-500/20 text-green-300 hover:bg-green-500/30' },
+                        { value: 'not_transcoded', label: 'Raw', Icon: Ban, selectedClass: 'bg-red-500/20 text-red-300 hover:bg-red-500/30' },
                     ].map(opt => (
                         <button
                             key={opt.value}
                             onClick={() => setEpHlsFilter(opt.value)}
-                            className={`text-xs px-1.5 py-1 rounded border transition shrink-0 ${
+                            className={`text-xs px-1.5 py-1 rounded border transition shrink-0 flex items-center gap-1 ${
                                 epHlsFilter === opt.value
-                                    ? 'bg-red-500/20 border-red-500/50 text-red-300'
+                                    ? opt.selectedClass
                                     : 'bg-slate-700 border-slate-600 text-slate-400 hover:bg-slate-600'
                             }`}
                             title={opt.value === '' ? 'Show all' : opt.value === 'transcoded' ? 'HLS transcoded only' : 'Raw stream only'}
                         >
+                            {opt.Icon && <opt.Icon className="w-3.5 h-3.5" />}
                             {opt.label}
                         </button>
                     ))}
-                    {/* Divider */}
-                    <div className="w-px h-4 bg-slate-600 shrink-0" />
+                    
                     {/* Autoplay toggle */}
                     <button
                         onClick={() => setAutoPlay(v => !v)}

@@ -33,6 +33,7 @@ function VideoPlayer({
     // ── Server-side progress tracking ─────────────────────────────────────────
     const savedProgressRef   = useRef(0);    // seconds fetched from server on mount
     const progressSaveTimer  = useRef(null); // setInterval handle — fires every 15 s
+    const videoReadyRef      = useRef(false); // true once onCanPlay has fired for the current src
 
     const [showControls, setShowControls] = useState(true);
     const [selectedQuality, setSelectedQuality] = useState('');
@@ -117,23 +118,46 @@ function VideoPlayer({
         if (progressSaveTimer.current) clearInterval(progressSaveTimer.current);
         progressSaveTimer.current = null;
         savedProgressRef.current  = 0;
+        videoReadyRef.current     = false;
         setResumePrompt(null);
-        shouldAutoPlayRef.current = true;
+
+        // Default to NOT auto-playing — we wait for the progress fetch to decide.
+        // This prevents the race where onCanPlay fires before the async fetch resolves
+        // and auto-plays the video before we know there is saved progress to resume.
+        shouldAutoPlayRef.current = false;
 
         if (videoId) {
-            // Fetch server-side progress; show resume prompt if > 5 s
-            historyAPI.getProgress(videoId).then(({ progress }) => {
+            historyAPI.getProgress(videoId).then(({ progress, duration: savedDur }) => {
                 savedProgressRef.current = progress || 0;
-                if (progress && progress > 5) {
+
+                // A progress >= 98 % of the recorded duration means the user finished
+                // the video — treat it as a fresh start (no resume prompt, play from 0).
+                const isComplete = savedDur > 0 && progress >= savedDur * 0.98;
+
+                if (progress > 5 && !isComplete) {
+                    // Mid-video: show the resume prompt, keep autoplay suppressed.
+                    // Also explicitly pause — MANIFEST_PARSED or onCanPlay may have
+                    // already fired while the fetch was in-flight (race condition).
                     shouldAutoPlayRef.current = false;
+                    videoRef.current?.pause();
                     setResumePrompt({ time: progress });
+                } else {
+                    // No progress, < 5 s, or already finished: play from the beginning
+                    shouldAutoPlayRef.current = true;
+                    // If onCanPlay already fired while the fetch was in flight, play now
+                    if (videoReadyRef.current) {
+                        videoRef.current?.play().catch(() => {});
+                    }
                 }
-            }).catch(() => {});
+            }).catch(() => {
+                // On network error fall back to normal autoplay
+                shouldAutoPlayRef.current = true;
+                if (videoReadyRef.current) {
+                    videoRef.current?.play().catch(() => {});
+                }
+            });
 
             // ── Progress save interval ────────────────────────────────────────
-            // Fires every 15 s. Reads currentTime directly from the video element
-            // so it never interferes with the timeupdate handler. Only saves while
-            // the video is actually playing and at a meaningful position.
             const SAVE_INTERVAL_MS = 15_000;
             progressSaveTimer.current = setInterval(() => {
                 const v = videoRef.current;
@@ -144,6 +168,9 @@ function VideoPlayer({
                     historyAPI.saveProgress(videoId, Math.floor(t), Math.floor(d)).catch(() => {});
                 }
             }, SAVE_INTERVAL_MS);
+        } else {
+            // No videoId — just autoplay immediately
+            shouldAutoPlayRef.current = true;
         }
 
         if (hlsUrl && Hls.isSupported()) {
@@ -289,8 +316,12 @@ function VideoPlayer({
 
         const onEnded = () => {
             setIsPlaying(false);
-            // Clear stored progress so the next watch starts from the beginning
-            if (videoId) historyAPI.clearProgress(videoId).catch(() => {});
+            // Eagerly save 100 % so the history card shows a full bar and the
+            // next load knows the video was completed (starts fresh, no resume prompt).
+            const d = Math.floor(video.duration || 0);
+            if (videoId && d > 0) {
+                historyAPI.saveProgress(videoId, d, d).catch(() => {});
+            }
 
             if (hasNext) {
                 setEndedState('countdown');
@@ -310,6 +341,7 @@ function VideoPlayer({
         const onCanPlay   = () => {
             setIsLoading(false);
             setError(null);
+            videoReadyRef.current = true;
             if (shouldAutoPlayRef.current) {
                 shouldAutoPlayRef.current = false;
                 video.play().catch(() => {});
@@ -386,9 +418,11 @@ function VideoPlayer({
     }, [resumePrompt]);
 
     const handleStartOver = useCallback(() => {
+        const video = videoRef.current;
         if (videoId) historyAPI.clearProgress(videoId).catch(() => {});
         setResumePrompt(null);
-        videoRef.current?.play().catch(() => {});
+        if (video) video.currentTime = 0;
+        video?.play().catch(() => {});
     }, [videoId]);
 
     // ── Playback controls ─────────────────────────────────────────────────────
@@ -397,6 +431,9 @@ function VideoPlayer({
         if (!video) return;
         setEndedState(null);
         video.currentTime = 0;
+        // Do NOT reset history here — the video ended at 100 % and we want
+        // to keep that record. The 15 s interval will naturally overwrite it
+        // with real positions as the user rewatches.
         video.play().catch(() => {});
     }, []);
 
