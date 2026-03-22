@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useState, useCallback } from 'react';
 import Hls from 'hls.js'
 import { Play, Pause, Volume2, VolumeX, Maximize, Minimize, Settings, SkipBack, SkipForward, RefreshCcw, RotateCcw, Volume1, RefreshCw } from 'lucide-react';
 import useMyStorage from '../../utils/localStorage';
+import { historyAPI } from '../../api/api';
 
 // ─── Component ────────────────────────────────────────────────────────────────
 function VideoPlayer({
@@ -27,10 +28,11 @@ function VideoPlayer({
 
     const [volume, setVolume]   = useMyStorage('vibeflix_volume', 1);
     const [isMuted, setIsMuted] = useMyStorage('vibeflix_muted', false);
-    const [progressMap, setProgressMap] = useMyStorage('vibeflix_progress', {});
-    const progressMapRef = useRef(progressMap);
-    useEffect(() => { progressMapRef.current = progressMap; }, [progressMap]);
     const lastVolumeRef = useRef(volume > 0 ? volume : 1);
+
+    // ── Server-side progress tracking ─────────────────────────────────────────
+    const savedProgressRef   = useRef(0);    // seconds fetched from server on mount
+    const progressSaveTimer  = useRef(null); // setInterval handle — fires every 15 s
 
     const [showControls, setShowControls] = useState(true);
     const [selectedQuality, setSelectedQuality] = useState('');
@@ -111,21 +113,42 @@ function VideoPlayer({
         video.volume = isMuted ? 0 : volume;
         video.muted  = isMuted;
 
+        // Cancel any in-flight progress interval from the previous video
+        if (progressSaveTimer.current) clearInterval(progressSaveTimer.current);
+        progressSaveTimer.current = null;
+        savedProgressRef.current  = 0;
+        setResumePrompt(null);
+        shouldAutoPlayRef.current = true;
+
         if (videoId) {
-            const saved = progressMapRef.current[videoId];
-            if (saved && saved > 5) {
-                shouldAutoPlayRef.current = false;
-                setResumePrompt({ time: saved });
-            } else {
-                setResumePrompt(null);
-                shouldAutoPlayRef.current = true;
-            }
-        } else {
-            setResumePrompt(null);
-            shouldAutoPlayRef.current = true;
+            // Fetch server-side progress; show resume prompt if > 5 s
+            historyAPI.getProgress(videoId).then(({ progress }) => {
+                savedProgressRef.current = progress || 0;
+                if (progress && progress > 5) {
+                    shouldAutoPlayRef.current = false;
+                    setResumePrompt({ time: progress });
+                }
+            }).catch(() => {});
+
+            // ── Progress save interval ────────────────────────────────────────
+            // Fires every 15 s. Reads currentTime directly from the video element
+            // so it never interferes with the timeupdate handler. Only saves while
+            // the video is actually playing and at a meaningful position.
+            const SAVE_INTERVAL_MS = 15_000;
+            progressSaveTimer.current = setInterval(() => {
+                const v = videoRef.current;
+                if (!v || v.paused || v.ended) return;
+                const t = v.currentTime;
+                const d = v.duration;
+                if (d > 0 && t > 5 && t < d * 0.98) {
+                    historyAPI.saveProgress(videoId, Math.floor(t), Math.floor(d)).catch(() => {});
+                }
+            }, SAVE_INTERVAL_MS);
         }
 
         if (hlsUrl && Hls.isSupported()) {
+            // ── Pick a preferred start level (480p) ───────────────────────────
+            // startLevel -1 = auto; we override once MANIFEST_PARSED fires.
             const hls = new Hls({
                 startLevel: -1,
                 autoLevelEnabled: true,
@@ -145,8 +168,32 @@ function VideoPlayer({
                 const levels = data.levels.map((lvl, idx) => ({
                     index: idx,
                     label: lvl.name || (lvl.height ? `${lvl.height}p` : `Level ${idx}`),
+                    height: lvl.height || 0,
                 }));
                 setHlsLevels(levels);
+
+                // Choose 480p as default; fall back to next-lowest, then lowest
+                const preferred = 480;
+                let chosenIdx = -1; // -1 = auto
+                // Try exact match first
+                const exact = levels.find(l => l.height === preferred);
+                if (exact) {
+                    chosenIdx = exact.index;
+                } else {
+                    // Pick the highest level that is ≤ 480p, or lowest available
+                    const below = levels.filter(l => l.height > 0 && l.height <= preferred);
+                    if (below.length > 0) {
+                        chosenIdx = below.reduce((a, b) => b.height > a.height ? b : a).index;
+                    } else if (levels.length > 0) {
+                        chosenIdx = levels[0].index; // lowest quality as safe fallback
+                    }
+                }
+                if (chosenIdx !== -1) {
+                    hls.startLevel = chosenIdx;
+                    hls.currentLevel = chosenIdx;
+                    setHlsLevel(chosenIdx);
+                }
+
                 if (shouldAutoPlayRef.current) {
                     video.play().catch(() => {});
                 }
@@ -160,12 +207,13 @@ function VideoPlayer({
                 if (data.fatal) {
                     console.error('HLS error:', data);
                     if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-                        hls.startLoad(); // try to recover
+                        hls.startLoad();
                     } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
                         hls.recoverMediaError();
                     } else {
                         hls.destroy();
                         hlsRef.current = null;
+                        // Fallback to raw stream
                         video.src = videoUrl;
                         video.load();
                     }
@@ -186,6 +234,7 @@ function VideoPlayer({
         }
 
         return () => {
+            if (progressSaveTimer.current) clearInterval(progressSaveTimer.current);
             if (hlsRef.current) {
                 hlsRef.current.destroy();
                 hlsRef.current = null;
@@ -208,7 +257,6 @@ function VideoPlayer({
         };
 
         const onTimeUpdate = () => {
-            // Don't override currentTime display while user is dragging
             if (isDraggingRef.current) return;
 
             const t = video.currentTime;
@@ -225,18 +273,24 @@ function VideoPlayer({
                 viewTrackedRef.current = true;
                 try { onView(); } catch (_) {}
             }
-
-            if (videoId && d > 0 && t > 5 && t < d * 0.8) {
-                setProgressMap(prev => ({ ...prev, [videoId]: t }));
-            }
         };
 
         const onPlay  = () => setIsPlaying(true);
-        const onPause = () => setIsPlaying(false);
+        const onPause = () => {
+            setIsPlaying(false);
+            // Flush progress immediately on pause so the position isn't lost
+            // between the 15-second interval ticks
+            const t = video.currentTime;
+            const d = video.duration;
+            if (videoId && d > 0 && t > 5 && t < d * 0.98) {
+                historyAPI.saveProgress(videoId, Math.floor(t), Math.floor(d)).catch(() => {});
+            }
+        };
 
         const onEnded = () => {
             setIsPlaying(false);
-            if (videoId) setProgressMap(prev => { const n = { ...prev }; delete n[videoId]; return n; });
+            // Clear stored progress so the next watch starts from the beginning
+            if (videoId) historyAPI.clearProgress(videoId).catch(() => {});
 
             if (hasNext) {
                 setEndedState('countdown');
@@ -286,7 +340,7 @@ function VideoPlayer({
             video.removeEventListener('error',          onError);
             video.removeEventListener('loadstart',      onLoadStart);
         };
-    }, [autoPlayNext, hasNext, onNext, videoId, onView, setProgressMap]);
+    }, [autoPlayNext, hasNext, onNext, videoId, onView]);
 
     // ── Fullscreen change ─────────────────────────────────────────────────────
     useEffect(() => {
@@ -332,10 +386,10 @@ function VideoPlayer({
     }, [resumePrompt]);
 
     const handleStartOver = useCallback(() => {
-        if (videoId) setProgressMap(prev => { const n = { ...prev }; delete n[videoId]; return n; });
+        if (videoId) historyAPI.clearProgress(videoId).catch(() => {});
         setResumePrompt(null);
         videoRef.current?.play().catch(() => {});
-    }, [videoId, setProgressMap]);
+    }, [videoId]);
 
     // ── Playback controls ─────────────────────────────────────────────────────
     const handleReplay = useCallback(() => {

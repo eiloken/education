@@ -220,7 +220,7 @@ function Home() {
         f.studios?.length > 0 || f.studiosExclude?.length > 0 ||
         f.actors?.length > 0 || f.actorsExclude?.length > 0 ||
         f.characters?.length > 0 || f.charactersExclude?.length > 0 ||
-        f.year || f.favorite || f.search || f.durationFilter,
+        f.year || f.favorite || f.search || f.durationFilter || f.hlsFilter,
     []);
 
     const buildApiParams = useCallback((extra = {}) => ({
@@ -240,6 +240,7 @@ function Home() {
         sortBy:            filters.sortBy,
         order:             filters.order,
         durationFilter:    filters.durationFilter || undefined,
+        hlsFilter:         filters.hlsFilter      || undefined,
         ...extra,
     }), [filters]);
 
@@ -302,7 +303,7 @@ function Home() {
         const fp = filtersToParams(nf);
         setSearchParams(prev => {
             const next = new URLSearchParams(prev);
-            ['q','tags','txc','stu','sxc','act','axc','chr','cxc','yr','fav','fm','sort','ord','dur'].forEach(k => next.delete(k));
+            ['q','tags','txc','stu','sxc','act','axc','chr','cxc','yr','fav','fm','sort','ord','dur','hls'].forEach(k => next.delete(k));
             Object.entries(fp).forEach(([k, v]) => { if (v != null) next.set(k, v); });
             const nextMode = hasActiveFilters(nf) ? 'filtered' : 'home';
             next.set('mode', nextMode);
@@ -349,7 +350,7 @@ function Home() {
         const fp = filtersToParams(newFilters);
         setSearchParams(prev => {
             const next = new URLSearchParams(prev);
-            ['q','tags','txc','stu','sxc','act','axc','chr','cxc','yr','fav','fm','sort','ord','dur'].forEach(k => next.delete(k));
+            ['q','tags','txc','stu','sxc','act','axc','chr','cxc','yr','fav','fm','sort','ord','dur','hls'].forEach(k => next.delete(k));
             Object.entries(fp).forEach(([k, v]) => { if (v != null) next.set(k, v); });
             next.set('mode', hasActiveFilters(newFilters) ? 'filtered' : 'home');
             next.delete('section');
@@ -374,6 +375,7 @@ function Home() {
         if (field === 'favorite')       { updated.favorite       = false; }
         if (field === 'search')         { updated.search         = ''; setSearchTerm(''); }
         if (field === 'durationFilter') { updated.durationFilter = ''; }
+        if (field === 'hlsFilter')      { updated.hlsFilter      = ''; }
         handleFilterChange(updated);
     };
 
@@ -386,7 +388,7 @@ function Home() {
         (filters.studios?.length || 0) + (filters.studiosExclude?.length || 0) +
         (filters.actors?.length || 0) + (filters.actorsExclude?.length || 0) +
         (filters.characters?.length || 0) + (filters.charactersExclude?.length || 0) +
-        (filters.year ? 1 : 0) + (filters.favorite ? 1 : 0) + (filters.durationFilter ? 1 : 0);
+        (filters.year ? 1 : 0) + (filters.favorite ? 1 : 0) + (filters.durationFilter ? 1 : 0) + (filters.hlsFilter ? 1 : 0);
 
     const hasFilters = filterCount > 0 || !!filters.search;
     const hasPendingSearch = searchTerm !== (filters.search || '');
@@ -464,6 +466,7 @@ function Home() {
                                         {filters.favorite      && <FilterPill label="❤ Favorites"              onRemove={() => handleRemoveFilter('favorite')}       color="red"   />}
                                         {filters.year          && <FilterPill label={`Year: ${filters.year}`}  onRemove={() => handleRemoveFilter('year')}           color="green" />}
                                         {filters.durationFilter && <FilterPill label={`⏱ ${filters.durationFilter}`} onRemove={() => handleRemoveFilter('durationFilter')} color="green" />}
+                                        {filters.hlsFilter      && <FilterPill label={filters.hlsFilter === 'transcoded' ? '✅ Transcoded' : '⚡ Not transcoded'} onRemove={() => handleRemoveFilter('hlsFilter')} color="green" />}
                                         {['studios','actors','characters','tags'].map(field => (
                                             <Fragment key={field}>
                                                 {(filters[field] || []).map(v => <FilterPill key={`inc-${v}`} label={`✓ ${v}`} onRemove={() => handleRemoveFilter(field, v)} color="green" />)}

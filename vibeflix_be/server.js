@@ -13,6 +13,7 @@ import seriesRoutes   from './routes/series.js';
 import statsRoutes    from './routes/stats.js';
 import authRoutes     from './routes/auth.js';
 import favoritesRoutes from './routes/favorites.js';
+import historyRoutes   from './routes/history.js';
 import activityRoutes  from './routes/activity.js';
 import backupRoutes    from './routes/backup.js';
 
@@ -83,6 +84,7 @@ app.use('/api/thumbnails', express.static(thumbnailDir));
 // ── Routes ─────────────────────────────────────────────────────────────────────
 app.use('/api/auth',      authRoutes);
 app.use('/api/favorites', favoritesRoutes);
+app.use('/api/history',   historyRoutes);
 app.use('/api/activity',  activityRoutes);
 app.use('/api/stats',     statsRoutes);
 app.use('/api/backup',    backupRoutes);

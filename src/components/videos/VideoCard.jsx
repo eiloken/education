@@ -1,20 +1,25 @@
-import React, { useState } from "react";
-import { generalAPI } from "../../api/api";
+import React, { useState, useEffect } from "react";
+import { generalAPI, historyAPI } from "../../api/api";
 import { Ban, CircleCheck, Clock, Eye, Film, Heart, Play } from "lucide-react";
 import { TagsContainer } from "../series/SeriesCard";
 import { formatDuration, formatViews } from "../../utils/format";
 
-// Read saved progress (seconds) for a given videoId from localStorage
+// Fetch saved progress (seconds) for a given videoId from the server
 function useSavedProgress(videoId, duration) {
-    const [pct] = useState(() => {
-        if (!videoId || !duration) return null;
-        try {
-            const map = JSON.parse(localStorage.getItem('vibeflix_progress') || '{}');
-            const saved = map[videoId];
-            if (!saved || saved <= 0) return null;
-            return Math.min(saved / duration, 1);
-        } catch { return null; }
-    });
+    const [pct, setPct] = useState(null);
+
+    useEffect(() => {
+        if (!videoId || !duration) return;
+        let cancelled = false;
+        historyAPI.getProgress(videoId)
+            .then(({ progress }) => {
+                if (cancelled || !progress || progress <= 5) return;
+                setPct(Math.min(progress / duration, 1));
+            })
+            .catch(() => {});
+        return () => { cancelled = true; };
+    }, [videoId, duration]);
+
     return pct; // 0-1 or null
 }
 
@@ -42,7 +47,7 @@ export default function VideoCard({ video, onToggleFavorite, onTagClick, onStudi
                 )}
 
                 {/* HLS status badge */}
-                <div className={`absolute top-3.5 left-3.5 rounded-full text-white ${hlsStatus === 'pending' 
+                <div className={`absolute top-1.5 left-1.5 rounded-full text-white ${hlsStatus === 'pending' 
                         ? 'bg-amber-400' 
                         : hlsStatus === 'ready' 
                             ? 'bg-green-400' 

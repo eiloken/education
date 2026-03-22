@@ -1,6 +1,6 @@
 import React, { forwardRef, useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { generalAPI, seriesAPI, videoAPI } from "../../api/api";
+import { generalAPI, seriesAPI, videoAPI, historyAPI } from "../../api/api";
 import toast from "react-hot-toast";
 import VideoPlayer from "./VideoPlayer";
 import {
@@ -37,7 +37,11 @@ export function SeriesDetail() {
     // ── Episode sort & playback options ──────────────────────────────────────
     const [epSortBy, setEpSortBy]   = useState('default');   // default | title | duration | favorites | views
     const [epOrder,  setEpOrder]    = useState('asc');        // asc | desc
+    const [epHlsFilter, setEpHlsFilter] = useState('');      // '' | 'transcoded' | 'not_transcoded'
     const [autoPlay, setAutoPlay]   = useState(false);
+
+    // Map of videoId → progress seconds (fetched from server for episode progress bars)
+    const [episodeProgressMap, setEpisodeProgressMap] = useState({});
 
     const [showProfile, setShowProfile] = useState(false);
 
@@ -77,6 +81,22 @@ export function SeriesDetail() {
     }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => { fetchData(); }, [fetchData]);
+
+    // Fetch server-side watch progress for all episodes
+    useEffect(() => {
+        if (episodes.length === 0) return;
+        Promise.all(
+            episodes.map(ep =>
+                historyAPI.getProgress(ep._id)
+                    .then(({ progress }) => ({ id: ep._id, progress }))
+                    .catch(() => ({ id: ep._id, progress: 0 }))
+            )
+        ).then(results => {
+            const map = {};
+            results.forEach(({ id, progress }) => { if (progress > 0) map[id] = progress; });
+            setEpisodeProgressMap(map);
+        });
+    }, [episodes.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // ── Measure player height with ResizeObserver ─────────────────────────────
     useEffect(() => {
@@ -242,7 +262,12 @@ export function SeriesDetail() {
 
     // ── Per-season sorted episodes ────────────────────────────────────────────
     const sortedSeasonEpisodes = React.useMemo(() => {
-        const list = [...(episodesBySeason[selectedSeason] || [])];
+        let list = [...(episodesBySeason[selectedSeason] || [])];
+
+        // HLS filter
+        if (epHlsFilter === 'transcoded')     list = list.filter(ep => ep.hlsStatus === 'ready');
+        if (epHlsFilter === 'not_transcoded') list = list.filter(ep => ep.hlsStatus === 'none' || ep.hlsStatus === 'failed');
+
         if (epSortBy === 'default') {
             list.sort((a, b) => (a.episodeNumber || 0) - (b.episodeNumber || 0));
         } else if (epSortBy === 'title') {
@@ -256,7 +281,7 @@ export function SeriesDetail() {
         }
         if (epOrder === 'desc') list.reverse();
         return list;
-    }, [episodesBySeason, selectedSeason, epSortBy, epOrder]);
+    }, [episodesBySeason, selectedSeason, epSortBy, epOrder, epHlsFilter]);
 
     if (loading) return <LoadingScreen />;
     if (!series) return <NotFoundScreen message="Series not found" />;
@@ -363,6 +388,27 @@ export function SeriesDetail() {
                     </button>
                     {/* Divider */}
                     <div className="w-px h-4 bg-slate-600 shrink-0" />
+                    {/* HLS / Streaming filter */}
+                    {[
+                        { value: '',               label: 'All' },
+                        { value: 'transcoded',     label: '✅ HLS' },
+                        { value: 'not_transcoded', label: '⚡ Raw' },
+                    ].map(opt => (
+                        <button
+                            key={opt.value}
+                            onClick={() => setEpHlsFilter(opt.value)}
+                            className={`text-xs px-1.5 py-1 rounded border transition shrink-0 ${
+                                epHlsFilter === opt.value
+                                    ? 'bg-red-500/20 border-red-500/50 text-red-300'
+                                    : 'bg-slate-700 border-slate-600 text-slate-400 hover:bg-slate-600'
+                            }`}
+                            title={opt.value === '' ? 'Show all' : opt.value === 'transcoded' ? 'HLS transcoded only' : 'Raw stream only'}
+                        >
+                            {opt.label}
+                        </button>
+                    ))}
+                    {/* Divider */}
+                    <div className="w-px h-4 bg-slate-600 shrink-0" />
                     {/* Autoplay toggle */}
                     <button
                         onClick={() => setAutoPlay(v => !v)}
@@ -405,6 +451,7 @@ export function SeriesDetail() {
                                 ref={currentEpisode?._id === ep._id ? activeEpisodeRef : null}
                                 onDelete={isAdmin ? (e) => handleDeleteEpisode(ep._id, e) : null}
                                 onEdit={isAdmin ? () => navigate(`/edit/${ep._id}`) : null}
+                                progressSeconds={episodeProgressMap[ep._id] || 0}
                             />
                         ))}
                     </div>
@@ -578,15 +625,10 @@ function VideoDetail() {
     return null;
 }
 
-const EpisodeRow = forwardRef(function EpisodeRow({ episode, isActive, onSelect, onDelete, onEdit }, ref) {
+const EpisodeRow = forwardRef(function EpisodeRow({ episode, isActive, onSelect, onDelete, onEdit, progressSeconds }, ref) {
     const progressPct = (() => {
-        if (!episode._id || !episode.duration) return null;
-        try {
-            const map = JSON.parse(localStorage.getItem('vibeflix_progress') || '{}');
-            const saved = map[episode._id];
-            if (!saved || saved <= 5) return null;
-            return Math.min(saved / episode.duration, 1);
-        } catch { return null; }
+        if (!episode.duration || !progressSeconds || progressSeconds <= 5) return null;
+        return Math.min(progressSeconds / episode.duration, 1);
     })();
 
     const { hlsStatus } = episode;

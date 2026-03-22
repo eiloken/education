@@ -1,10 +1,10 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
     X, Heart, Film, Layers, LogOut, Shield, User as UserIcon,
-    ChevronLeft, ChevronRight, RefreshCw, Crown, Users,
+    ChevronLeft, ChevronRight, RefreshCw, Crown, Users, Clock, Trash2,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
-import { favoritesAPI, authAPI, generalAPI } from '../../api/api';
+import { favoritesAPI, authAPI, generalAPI, historyAPI } from '../../api/api';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 
@@ -38,6 +38,55 @@ function FavCard({ item, onClose }) {
                     <p className="text-slate-500 text-xs mt-0.5">{new Date(item.favoritedAt).toLocaleDateString()}</p>
                 )}
             </div>
+        </div>
+    );
+}
+
+// ── Mini card for a history entry ─────────────────────────────────────────────
+function HistoryCard({ item, onClose, onRemove }) {
+    const navigate = useNavigate();
+    const thumbSrc = item.thumbnailPath ? generalAPI.thumbnailUrl(item.thumbnailPath) : null;
+    const pct      = item.progressPct ?? (item.duration > 0 ? Math.min(item.progress / item.duration, 1) : 0);
+
+    const handleClick = () => {
+        const url = item.seriesId ? `/series/${item.seriesId}?ep=${item.videoId}` : `/video/${item.videoId}`;
+        navigate(url);
+        onClose();
+    };
+
+    return (
+        <div className="group relative bg-slate-800 border border-slate-700 rounded-xl overflow-hidden hover:border-slate-600 transition cursor-pointer"
+             onClick={handleClick}>
+            {/* Thumbnail */}
+            <div className="aspect-video bg-slate-900 relative">
+                {thumbSrc
+                    ? <img src={thumbSrc} alt={item.title} className="w-full h-full object-cover" />
+                    : <div className="w-full h-full flex items-center justify-center">
+                        <Film className="w-8 h-8 text-slate-700" />
+                      </div>
+                }
+                {/* Progress bar */}
+                <div className="absolute bottom-0 left-0 right-0 h-1 bg-white/20">
+                    <div className="h-full bg-red-500 transition-none" style={{ width: `${pct * 100}%` }} />
+                </div>
+            </div>
+
+            {/* Info */}
+            <div className="p-2">
+                <p className="text-white text-xs font-medium truncate">{item.title}</p>
+                <p className="text-slate-500 text-xs mt-0.5">
+                    {item.watchedAt ? new Date(item.watchedAt).toLocaleDateString() : ''}
+                </p>
+            </div>
+
+            {/* Remove button — visible on hover */}
+            <button
+                onClick={e => { e.stopPropagation(); onRemove(item.videoId); }}
+                className="absolute top-1.5 right-1.5 p-1 bg-black/60 rounded-full opacity-0 group-hover:opacity-100 transition"
+                title="Remove from history"
+            >
+                <Trash2 className="w-3 h-3 text-white" />
+            </button>
         </div>
     );
 }
@@ -105,6 +154,14 @@ export default function UserProfile({ isOpen, onClose }) {
     const [users,       setUsers]       = useState([]);
     const [usersLoading,setUsersLoading]= useState(false);
 
+    // ── History state ──────────────────────────────────────────────────────────
+    const [history,        setHistory]       = useState([]);
+    const [histLoading,    setHistLoading]   = useState(false);
+    const [histPage,       setHistPage]      = useState(1);
+    const [histTotal,      setHistTotal]     = useState(0);
+    const [histHasMore,    setHistHasMore]   = useState(false);
+    const histScrollRef = useRef(null);
+
     const loadFavorites = useCallback(async () => {
         setFavLoading(true);
         try {
@@ -128,13 +185,50 @@ export default function UserProfile({ isOpen, onClose }) {
         finally { setUsersLoading(false); }
     }, [isAdmin]);
 
+    // ── History helpers ────────────────────────────────────────────────────────
+    const loadHistory = useCallback(async (page = 1, append = false) => {
+        setHistLoading(true);
+        try {
+            const data = await historyAPI.getHistory({ page, limit: 20 });
+            setHistory(prev => append ? [...prev, ...data.items] : data.items);
+            setHistTotal(data.total);
+            setHistHasMore(page < data.totalPages);
+            setHistPage(page);
+        } catch { toast.error('Failed to load history'); }
+        finally { setHistLoading(false); }
+    }, []);
+
+    const handleRemoveHistory = useCallback(async (videoId) => {
+        try {
+            await historyAPI.removeEntry(videoId);
+            setHistory(prev => prev.filter(h => h.videoId.toString() !== videoId.toString()));
+            setHistTotal(prev => Math.max(0, prev - 1));
+        } catch { toast.error('Failed to remove history entry'); }
+    }, []);
+
+    // Infinite-scroll: load next page when user reaches bottom of history list
+    useEffect(() => {
+        const el = histScrollRef.current;
+        if (!el) return;
+        const onScroll = () => {
+            if (histLoading || !histHasMore) return;
+            if (el.scrollTop + el.clientHeight >= el.scrollHeight - 60) {
+                loadHistory(histPage + 1, true);
+            }
+        };
+        el.addEventListener('scroll', onScroll);
+        return () => el.removeEventListener('scroll', onScroll);
+    }, [histLoading, histHasMore, histPage, loadHistory]);
+
     useEffect(() => { if (isOpen && tab === 'favorites') loadFavorites(); }, [isOpen, tab, loadFavorites]);
+    useEffect(() => { if (isOpen && tab === 'history')   loadHistory(1);   }, [isOpen, tab, loadHistory]);
     useEffect(() => { if (isOpen && tab === 'users' && isAdmin) loadUsers(); }, [isOpen, tab, isAdmin, loadUsers]);
 
     if (!isOpen || !user) return null;
 
     const allTabs = [
         { id: 'favorites', label: 'Favorites', icon: Heart    },
+        { id: 'history',   label: 'History',   icon: Clock    },
         { id: 'account',   label: 'Account',   icon: UserIcon },
         ...(isAdmin ? [{ id: 'users', label: 'Users', icon: Users }] : []),
     ];
@@ -240,6 +334,56 @@ export default function UserProfile({ isOpen, onClose }) {
                                         </div>
                                     )}
                                 </>
+                            )}
+                        </div>
+                    )}
+
+                    {/* ── History ── */}
+                    {tab === 'history' && (
+                        <div className="flex flex-col h-full">
+                            <div className="flex items-center justify-between mb-3">
+                                <p className="text-slate-500 text-xs">{histTotal} item{histTotal !== 1 ? 's' : ''} watched</p>
+                                <button onClick={() => loadHistory(1)} className="p-1.5 text-slate-500 hover:text-slate-300 transition">
+                                    <RefreshCw className="w-4 h-4" />
+                                </button>
+                            </div>
+
+                            {histLoading && history.length === 0 ? (
+                                <div className="flex justify-center py-12">
+                                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-red-500" />
+                                </div>
+                            ) : history.length === 0 ? (
+                                <div className="text-center py-12">
+                                    <Clock className="w-12 h-12 text-slate-700 mx-auto mb-3" />
+                                    <p className="text-slate-500 text-sm">No watch history yet</p>
+                                    <p className="text-slate-600 text-xs mt-1">Videos you watch will appear here</p>
+                                </div>
+                            ) : (
+                                <div
+                                    ref={histScrollRef}
+                                    className="overflow-y-auto flex-1"
+                                    style={{ maxHeight: '100%' }}
+                                >
+                                    <div className="grid grid-cols-2 gap-3">
+                                        {history.map(item => (
+                                            <HistoryCard
+                                                key={item.videoId}
+                                                item={item}
+                                                onClose={onClose}
+                                                onRemove={handleRemoveHistory}
+                                            />
+                                        ))}
+                                    </div>
+                                    {/* Infinite scroll sentinel */}
+                                    {histHasMore && (
+                                        <div className="flex justify-center py-4">
+                                            {histLoading
+                                                ? <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-red-500" />
+                                                : <p className="text-slate-600 text-xs">Scroll for more</p>
+                                            }
+                                        </div>
+                                    )}
+                                </div>
                             )}
                         </div>
                     )}

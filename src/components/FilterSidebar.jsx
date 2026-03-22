@@ -14,6 +14,7 @@ export const DEFAULT_FILTERS = {
     sortBy: 'updatedAt',
     order: 'desc',
     durationFilter: '',
+    hlsFilter: '',
 };
 
 // ─── URL serialisation helpers ────────────────────────────────────────────────
@@ -35,6 +36,7 @@ export const filtersToParams = (f) => {
         sort: f.sortBy    && f.sortBy    !== DEFAULT_FILTERS.sortBy  ? f.sortBy  : null,
         ord:  f.order     && f.order     !== DEFAULT_FILTERS.order   ? f.order   : null,
         dur:  f.durationFilter || null,
+        hls:  f.hlsFilter      || null,
     };
 };
 
@@ -56,6 +58,7 @@ export const paramsToFilters = (params) => {
         sortBy:            params.get('sort')|| DEFAULT_FILTERS.sortBy,
         order:             params.get('ord') || DEFAULT_FILTERS.order,
         durationFilter:    params.get('dur') || '',
+        hlsFilter:         params.get('hls') || '',
     };
 };
 
@@ -127,7 +130,7 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters }) {
         (localFilters.actors?.length || 0)     + (localFilters.actorsExclude?.length || 0) +
         (localFilters.characters?.length || 0) + (localFilters.charactersExclude?.length || 0) +
         (localFilters.year ? 1 : 0) + (localFilters.favorite ? 1 : 0) +
-        (localFilters.durationFilter ? 1 : 0);
+        (localFilters.durationFilter ? 1 : 0) + (localFilters.hlsFilter ? 1 : 0);
 
     const years = Array.from({ length: 50 }, (_, i) => new Date().getFullYear() - i);
 
@@ -266,6 +269,29 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters }) {
                         </div>
                     </Section>
 
+                    <Section title="Streaming">
+                        <div className="flex gap-2 flex-wrap">
+                            {[
+                                { value: '',               label: '🎬 All',           sub: 'no filter' },
+                                { value: 'transcoded',     label: '✅ Transcoded',     sub: 'HLS ready' },
+                                { value: 'not_transcoded', label: '⚡ Not transcoded', sub: 'raw stream' },
+                            ].map(opt => (
+                                <button
+                                    key={opt.value}
+                                    onClick={() => handleChange('hlsFilter', opt.value)}
+                                    className={`flex-1 min-w-17.5 px-2.5 py-2 rounded-lg text-xs font-medium border-2 transition text-center ${
+                                        localFilters.hlsFilter === opt.value
+                                            ? 'border-red-500 bg-red-500/20 text-red-300'
+                                            : 'border-slate-600 bg-slate-700 text-slate-300 hover:bg-slate-600'
+                                    }`}
+                                >
+                                    <div>{opt.label}</div>
+                                    <div className="text-slate-400 text-[10px]">{opt.sub}</div>
+                                </button>
+                            ))}
+                        </div>
+                    </Section>
+
                     {studios.length    > 0 && <TagSection title="Studios"    field="studios"    localFilters={localFilters} onCycle={handleCycle} allItems={studios}    />}
                     {actors.length     > 0 && <TagSection title="Actors"     field="actors"     localFilters={localFilters} onCycle={handleCycle} allItems={actors}     />}
                     {characters.length > 0 && <TagSection title="Characters" field="characters" localFilters={localFilters} onCycle={handleCycle} allItems={characters} />}
@@ -278,6 +304,7 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters }) {
                                 {localFilters.favorite        && <Badge label="❤ Favorites" color="red" />}
                                 {localFilters.year            && <Badge label={`Year: ${localFilters.year}`} color="green" />}
                                 {localFilters.durationFilter  && <Badge label={`Duration: ${localFilters.durationFilter}`} color="green" />}
+                                {localFilters.hlsFilter       && <Badge label={`Streaming: ${localFilters.hlsFilter === 'transcoded' ? 'Transcoded' : 'Not transcoded'}`} color="green" />}
                                 {['studios', 'actors', 'characters', 'tags'].map(f => (
                                     <React.Fragment key={f}>
                                         {localFilters[f]?.length > 0 && <Badge label={`✓ ${localFilters[f].length} ${f}`} color="green" />}

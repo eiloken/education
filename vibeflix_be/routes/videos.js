@@ -520,7 +520,7 @@ function buildFilterQuery(params, userFavoriteIds = null) {
         tags, tagsExclude, studios, studiosExclude,
         actors, actorsExclude, characters, charactersExclude,
         year, favorite, search, filterMode = 'or', dateFrom,
-        durationFilter,
+        durationFilter, hlsFilter,
     } = params;
 
     const op    = filterMode === 'and' ? '$all' : '$in';
@@ -546,6 +546,10 @@ function buildFilterQuery(params, userFavoriteIds = null) {
     if (durationFilter === 'short')  query.duration = { $gt: 0, $lt: 900 };
     if (durationFilter === 'medium') query.duration = { $gte: 900, $lt: 3600 };
     if (durationFilter === 'long')   query.duration = { $gte: 3600 };
+
+    // HLS transcoding filter: 'transcoded' | 'not_transcoded' | '' (all)
+    if (hlsFilter === 'transcoded')     query.hlsStatus = 'ready';
+    if (hlsFilter === 'not_transcoded') query.hlsStatus = { $in: ['none', 'failed'] };
 
     if (favorite === 'true') {
         query._id = { $in: userFavoriteIds ?? [] };

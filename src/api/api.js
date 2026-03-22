@@ -47,6 +47,29 @@ export const favoritesAPI = {
         (await axios.get(`${API_URL}/api/favorites/ids`)).data,
 };
 
+// ─── History API ──────────────────────────────────────────────────────────────
+export const historyAPI = {
+    /** Upsert progress — throttle calls on the client side */
+    saveProgress: async (videoId, progress, duration) =>
+        (await axios.post(`${API_URL}/api/history/progress`, { videoId, progress, duration })).data,
+
+    /** Clear progress for a video (called when it finishes) */
+    clearProgress: async (videoId) =>
+        (await axios.delete(`${API_URL}/api/history/progress/${videoId}`)).data,
+
+    /** Remove a video from history entirely */
+    removeEntry: async (videoId) =>
+        (await axios.delete(`${API_URL}/api/history/${videoId}`)).data,
+
+    /** Paginated history list */
+    getHistory: async (params = {}) =>
+        (await axios.get(`${API_URL}/api/history`, { params })).data,
+
+    /** Get saved progress for a single video */
+    getProgress: async (videoId) =>
+        (await axios.get(`${API_URL}/api/history/progress/${videoId}`)).data,
+};
+
 // ─── Activity API ─────────────────────────────────────────────────────────────
 export const activityAPI = {
     ping: async () => {
