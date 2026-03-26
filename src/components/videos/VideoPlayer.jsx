@@ -17,6 +17,9 @@ function VideoPlayer({
     autoPlayNext = false,
     isEmbedded = false,
     onView = null,          // Called once after 30 s of actual playback
+    title = null,           // Episode / video title shown in the top bar
+    seriesTitle = null,     // Series name shown as subtitle in the top bar
+    episodeLabel = null,    // e.g. "S01 · E03"
 }) {
     const videoRef = useRef(null);
     const containerRef = useRef(null);
@@ -272,6 +275,17 @@ function VideoPlayer({
     // ── Cleanup countdown on unmount ──────────────────────────────────────────
     useEffect(() => () => { if (countdownRef.current) clearInterval(countdownRef.current); }, []);
 
+    // ── Fire onNext when countdown expires ───────────────────────────────────
+    // onNext must NOT be called inside the setCountdown updater (updaters must
+    // be pure — calling setState on a parent component from there triggers the
+    // "Cannot update a component while rendering a different component" warning).
+    // Instead, we watch countdown reach 0 here in a plain effect.
+    useEffect(() => {
+        if (countdown === 0 && endedState === 'countdown') {
+            onNext?.();
+        }
+    }, [countdown, endedState, onNext]);
+
     // ── Video event listeners ─────────────────────────────────────────────────
     useEffect(() => {
         const video = videoRef.current;
@@ -329,7 +343,10 @@ function VideoPlayer({
                 if (countdownRef.current) clearInterval(countdownRef.current);
                 countdownRef.current = setInterval(() => {
                     setCountdown(prev => {
-                        if (prev <= 1) { clearInterval(countdownRef.current); onNext?.(); return 0; }
+                        if (prev <= 1) {
+                            clearInterval(countdownRef.current);
+                            return 0; // onNext is fired by the useEffect below — NOT here
+                        }
                         return prev - 1;
                     });
                 }, 1000);
@@ -800,9 +817,37 @@ function VideoPlayer({
             {/* Controls overlay */}
             {!endedState && !volumeIndicator && (
                 <div
-                    className={`absolute inset-0 transition-opacity duration-300 flex flex-col justify-end ${showControls && !resumePrompt ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
-                    style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,0.6) 0%, transparent 30%, transparent 60%, rgba(0,0,0,0.8) 100%)' }}
+                    className={`absolute inset-0 transition-opacity duration-300 flex flex-col justify-between ${showControls && !resumePrompt ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+                    style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,0.65) 0%, transparent 28%, transparent 58%, rgba(0,0,0,0.85) 100%)' }}
                 >
+                    {/* ── Top title bar (mirrors height of bottom controls) ─── */}
+                    <div className="px-2 pt-2 pb-1 sm:px-3 sm:pt-3 sm:pb-2 md:px-4 md:pt-4 space-y-0.5" data-controls>
+                        <div className="flex items-center gap-2 min-h-7 sm:min-h-8 md:min-h-9 text-white text-xs sm:text-sm md:text-base">
+                            {title && (
+                                <p className="font-semibold truncate leading-tight drop-shadow">
+                                    {title}
+                                </p>
+                            )}
+                            {title && seriesTitle && (
+                                <span className="leading-none">·</span>
+                            )}
+                            <div className="flex items-center h-5 sm:h-6 gap-1.5 text-white/40">
+                                {seriesTitle && (
+                                    <span className="truncate leading-none drop-shadow">
+                                        {seriesTitle}
+                                    </span>
+                                )}
+                                {episodeLabel && seriesTitle && (
+                                    <span className="leading-none">·</span>
+                                )}
+                                {episodeLabel && (
+                                    <span className="truncate leading-none drop-shadow shrink-0">
+                                        {episodeLabel}
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+                    </div>
                     {/* Center area: skip indicators + play button */}
                     {!error && (
                         <div className='flex-1 flex items-center justify-center cursor-pointer'>
@@ -814,12 +859,12 @@ function VideoPlayer({
                                 )}
                             </div>
 
-                            <button onClick={togglePlay} className="p-5 sm:p-6 bg-red-500 rounded-full transition hover:scale-110 shadow-2xl opacity-40" data-controls>
+                            <button onClick={togglePlay} className="p-4 sm:p-5 md:p-6 bg-red-500 rounded-full transition hover:scale-110 shadow-2xl opacity-40" data-controls>
                                 {isLoading
-                                    ? <RefreshCw className="w-10 h-10 sm:w-12 sm:h-12 text-white animate-spin" />
+                                    ? <RefreshCw className="w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 text-white animate-spin" />
                                     : isPlaying
-                                        ? <Pause className="w-10 h-10 sm:w-12 sm:h-12 text-white" fill="currentColor" />
-                                        : <Play className="w-10 h-10 sm:w-12 sm:h-12 text-white" fill="currentColor" />}
+                                        ? <Pause className="w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 text-white" fill="currentColor" />
+                                        : <Play className="w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 text-white" fill="currentColor" />}
                             </button>
 
                             <div className="pointer-events-none flex-1 flex flex-col items-center gap-1">
@@ -833,7 +878,7 @@ function VideoPlayer({
                     )}
 
                     {/* Bottom controls */}
-                    <div className="px-3 pb-3 sm:px-4 sm:pb-4 space-y-1" data-controls>
+                    <div className="px-2 pb-2 sm:px-3 sm:pb-3 md:px-4 md:pb-4 space-y-1" data-controls>
 
                         {/* ── Seek bar ────────────────────────────────────────────────────────── */}
                         <div
@@ -892,65 +937,66 @@ function VideoPlayer({
                         {/* Buttons row */}
                         <div className="flex items-center justify-between gap-2">
                             {/* Left controls */}
-                            <div className="flex items-center gap-1 sm:gap-2 min-w-0">
+                            <div className="flex items-center gap-0.5 sm:gap-1 md:gap-2 min-w-0">
                                 <button onClick={endedState === 'replay' ? handleReplay : togglePlay}
-                                    className="p-1.5 sm:p-2 hover:bg-white/20 rounded-lg transition"
+                                    className="p-1 sm:p-1.5 md:p-2 hover:bg-white/20 rounded-lg transition"
                                     disabled={isLoading || !!error}
                                     title={endedState === 'replay' ? 'Replay' : isPlaying ? 'Pause' : 'Play'}
                                 >
                                     {endedState === 'replay'
-                                        ? <RotateCcw className="w-5 h-5 sm:w-6 sm:h-6 text-red-500" />
+                                        ? <RotateCcw className="w-4 h-4 sm:w-5 sm:h-5 md:w-6 md:h-6 text-red-500" />
                                         : isPlaying
-                                            ? <Pause className="w-5 h-5 sm:w-6 sm:h-6 text-red-500" />
-                                            : <Play className="w-5 h-5 sm:w-6 sm:h-6 text-red-500" />}
+                                            ? <Pause className="w-4 h-4 sm:w-5 sm:h-5 md:w-6 md:h-6 text-red-500" />
+                                            : <Play className="w-4 h-4 sm:w-5 sm:h-5 md:w-6 md:h-6 text-red-500" />}
                                 </button>
 
                                 {(hasPrevious || hasNext) && (
                                     <>
                                         {hasPrevious && onPrevious && (
-                                            <button onClick={onPrevious} className="p-1.5 sm:p-2 hover:bg-white/20 rounded-lg transition" title="Previous Episode">
-                                                <SkipBack className="w-5 h-5 sm:w-6 sm:h-6 text-red-500" />
+                                            <button onClick={onPrevious} className="p-1 sm:p-1.5 md:p-2 hover:bg-white/20 rounded-lg transition" title="Previous Episode">
+                                                <SkipBack className="w-4 h-4 sm:w-5 sm:h-5 md:w-6 md:h-6 text-red-500" />
                                             </button>
                                         )}
                                         {hasNext && onNext && (
-                                            <button onClick={onNext} className="p-1.5 sm:p-2 hover:bg-white/20 rounded-lg transition" title="Next Episode">
-                                                <SkipForward className="w-5 h-5 sm:w-6 sm:h-6 text-red-500" />
+                                            <button onClick={onNext} className="p-1 sm:p-1.5 md:p-2 hover:bg-white/20 rounded-lg transition" title="Next Episode">
+                                                <SkipForward className="w-4 h-4 sm:w-5 sm:h-5 md:w-6 md:h-6 text-red-500" />
                                             </button>
                                         )}
                                     </>
                                 )}
 
                                 {/* Volume */}
-                                <div className="flex items-center gap-1 group/vol">
-                                    <button onClick={toggleMute} className="p-1.5 sm:p-2 hover:bg-white/20 rounded-lg transition">
+                                <div className="flex items-center gap-0.5 sm:gap-1 group/vol">
+                                    <button onClick={toggleMute} className="p-1 sm:p-1.5 md:p-2 hover:bg-white/20 rounded-lg transition">
                                         {(isMuted || volume === 0)
-                                            ? <VolumeX className="w-5 h-5 sm:w-6 sm:h-6 text-red-500" />
+                                            ? <VolumeX className="w-4 h-4 sm:w-5 sm:h-5 md:w-6 md:h-6 text-red-500" />
                                             : volume < 0.5
-                                                ? <Volume1 className="w-5 h-5 sm:w-6 sm:h-6 text-red-500" />
-                                                : <Volume2 className="w-5 h-5 sm:w-6 sm:h-6 text-red-500" />}
+                                                ? <Volume1 className="w-4 h-4 sm:w-5 sm:h-5 md:w-6 md:h-6 text-red-500" />
+                                                : <Volume2 className="w-4 h-4 sm:w-5 sm:h-5 md:w-6 md:h-6 text-red-500" />}
                                     </button>
+                                    {/* Hide volume slider on xs screens — tap mute icon instead */}
                                     <input type="range" min="0" max="1" step="0.05"
                                         value={effectiveVolume} onChange={handleVolumeChange}
-                                        className="w-0 group-hover/vol:w-16 sm:group-hover/vol:w-20 transition-all opacity-0 group-hover/vol:opacity-100 accent-red-500"
+                                        className="hidden sm:block w-0 group-hover/vol:w-16 md:group-hover/vol:w-20 transition-all opacity-0 group-hover/vol:opacity-100 accent-red-500"
                                     />
                                 </div>
 
                                 {/* Time */}
-                                <span className="text-xs sm:text-sm text-white/80 font-mono whitespace-nowrap">
+                                <span className="text-xs sm:text-xs md:text-sm text-white/80 font-mono whitespace-nowrap">
                                     {formatTime(currentTime)} / {formatTime(duration)}
                                 </span>
                             </div>
 
                             {/* Right controls */}
-                            <div className="flex items-center gap-1 shrink-0">
+                            <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
                                 {hasQualityOptions && (
                                     <div className="relative">
                                         <button
                                             onClick={() => setShowSettings(v => !v)}
-                                            className="p-1.5 sm:p-2 hover:bg-white/20 rounded-lg transition"
+                                            className="p-1 sm:p-1.5 md:p-2 hover:bg-white/20 rounded-lg transition"
                                             title="Quality"
                                         >
-                                            <Settings className="w-5 h-5 sm:w-6 sm:h-6 text-red-500" />
+                                            <Settings className="w-4 h-4 sm:w-5 sm:h-5 md:w-6 md:h-6 text-red-500" />
                                         </button>
                             
                                         {showSettings && (
@@ -995,10 +1041,10 @@ function VideoPlayer({
                                     </div>
                                 )}
 
-                                <button onClick={toggleFullscreen} className="p-1.5 sm:p-2 hover:bg-white/20 rounded-lg transition">
+                                <button onClick={toggleFullscreen} className="p-1 sm:p-1.5 md:p-2 hover:bg-white/20 rounded-lg transition">
                                     {isFullscreen
-                                        ? <Minimize className="w-5 h-5 sm:w-6 sm:h-6 text-red-500" />
-                                        : <Maximize className="w-5 h-5 sm:w-6 sm:h-6 text-red-500" />}
+                                        ? <Minimize className="w-4 h-4 sm:w-5 sm:h-5 md:w-6 md:h-6 text-red-500" />
+                                        : <Maximize className="w-4 h-4 sm:w-5 sm:h-5 md:w-6 md:h-6 text-red-500" />}
                                 </button>
                             </div>
                         </div>
@@ -1010,13 +1056,13 @@ function VideoPlayer({
             {(endedState === 'replay' || endedState === 'countdown') && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 z-10" data-controls>
                     {endedState === 'replay' && (
-                        <button onClick={handleReplay} className="flex flex-col items-center gap-3 p-6 sm:p-8 bg-red-500/90 hover:bg-red-500 rounded-full transition hover:scale-110 shadow-2xl">
-                            <RotateCcw className="w-12 h-12 sm:w-14 sm:h-14 text-white" />
+                        <button onClick={handleReplay} className="flex flex-col items-center gap-3 p-5 sm:p-6 md:p-8 bg-red-500/90 hover:bg-red-500 rounded-full transition hover:scale-110 shadow-2xl">
+                            <RotateCcw className="w-10 h-10 sm:w-12 sm:h-12 md:w-14 md:h-14 text-white" />
                         </button>
                     )}
                     {endedState === 'countdown' && (
                         <>
-                            <div className="relative w-24 h-24 sm:w-30 sm:h-30 rounded-full bg-red-500/90 hover:bg-red-500 transition hover:scale-110 shadow-2xl">
+                            <div className="relative w-20 h-20 sm:w-24 sm:h-24 md:w-30 md:h-30 rounded-full bg-red-500/90 hover:bg-red-500 transition hover:scale-110 shadow-2xl">
                                 <svg className="w-full h-full -rotate-90 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" viewBox="0 0 80 80">
                                     <circle cx="40" cy="40" r="34" fill="none" stroke="white" strokeWidth="6"
                                         strokeDasharray={`${2 * Math.PI * 34}`}
@@ -1029,7 +1075,7 @@ function VideoPlayer({
                                     onClick={handlePlayNextNow}
                                     className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex items-center justify-center text-2xl font-bold text-white"
                                 >
-                                    <Play className='w-12 h-12 sm:w-14 text-white' fill='white' />
+                                    <Play className='w-10 h-10 sm:w-12 sm:h-12 md:w-14 md:h-14 text-white' fill='white' />
                                 </button>
                             </div>
                             <button onClick={handleCancelCountdown} className="mt-2 px-3 py-1.5 rounded-lg hover:bg-slate-700/30 transition cursor-pointer">Cancel</button>

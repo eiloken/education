@@ -365,9 +365,9 @@ export default function UserProfile({ isOpen, onClose }) {
                                     style={{ maxHeight: '100%' }}
                                 >
                                     <div className="grid grid-cols-2 gap-3">
-                                        {history.map(item => (
+                                        {history.map((item, i) => (
                                             <HistoryCard
-                                                key={item.videoId}
+                                                key={i}
                                                 item={item}
                                                 onClose={onClose}
                                                 onRemove={handleRemoveHistory}
