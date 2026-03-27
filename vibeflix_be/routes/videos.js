@@ -255,7 +255,7 @@ async function transcodeToHLS(videoPath, videoId) {
     const LADDER = [
         { label: '480p',  height: 480,  videoBr: '1200k', audioBr: '128k' },
         { label: '720p',  height: 720,  videoBr: '2500k', audioBr: '128k' },
-        { label: '1080p', height: 1080, videoBr: '5000k', audioBr: '192k' },
+        { label: '1080p', height: 1080, videoBr: '8000k', audioBr: '192k' },
     ];
 
     const eligible = LADDER.filter(q => q.height <= srcHeight && q.height <= MAX_TRANSCODE_RES);
@@ -342,7 +342,7 @@ async function transcodeToHLS(videoPath, videoId) {
     const META = {
         '480p':  { bw: 1400000, res: '854x480'   },
         '720p':  { bw: 2700000, res: '1280x720'  },
-        '1080p': { bw: 5200000, res: '1920x1080' },
+        '1080p': { bw: 8200000, res: '1920x1080' },
     };
 
     let master = '#EXTM3U\n#EXT-X-VERSION:3\n\n';
@@ -495,18 +495,25 @@ function getQueueStatus() {
 }
 
 // ─── Search / Filter Helpers ──────────────────────────────────────────────────
-function applySmartSearch(query, search) {
+// seriesIds — optional array of Series._id that matched the search term
+// by title, so videos belonging to those series surface in results.
+function applySmartSearch(query, search, seriesIds = []) {
     if (!search?.trim()) return;
     const terms = search.trim().split(/\s+/).filter(Boolean);
     const termClauses = terms.map(term => {
         const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const r = new RegExp(escaped, 'i');
-        return {
+        const clause = {
             $or: [
                 { title: r }, { description: r }, { tags: r },
                 { studios: r }, { actors: r }, { characters: r },
             ],
         };
+        // For terms that match a series title, also include videos from that series
+        if (seriesIds.length > 0) {
+            clause.$or.push({ seriesId: { $in: seriesIds } });
+        }
+        return clause;
     });
     if (termClauses.length === 1) {
         query.$or = termClauses[0].$or;
@@ -515,7 +522,7 @@ function applySmartSearch(query, search) {
     }
 }
 
-function buildFilterQuery(params, userFavoriteIds = null) {
+function buildFilterQuery(params, userFavoriteIds = null, seriesIds = []) {
     const {
         tags, tagsExclude, studios, studiosExclude,
         actors, actorsExclude, characters, charactersExclude,
@@ -540,7 +547,7 @@ function buildFilterQuery(params, userFavoriteIds = null) {
 
     if (year)     query.year      = parseInt(year);
     if (dateFrom) query.updatedAt = { $gte: new Date(dateFrom) };
-    if (search)   applySmartSearch(query, search);
+    if (search)   applySmartSearch(query, search, seriesIds);
 
     // Duration buckets: short < 15 min | medium 15–60 min | long > 60 min
     if (durationFilter === 'short')  query.duration = { $gt: 0, $lt: 900 };
@@ -583,7 +590,22 @@ router.get('/', async (req, res) => {
             favSet     = new Set(userFavIds.map(id => id.toString()));
         }
 
-        const query = buildFilterQuery(req.query, userFavIds);
+        // Look up Series whose title matches the search term so that episodes
+        // belonging to a matching series surface in results.
+        let matchedSeriesIds = [];
+        if (req.query.search?.trim()) {
+            const terms = req.query.search.trim().split(/\s+/).filter(Boolean);
+            const seriesOrClauses = terms.map(term => ({
+                title: new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'),
+            }));
+            const matchedSeries = await Series.find(
+                seriesOrClauses.length === 1 ? seriesOrClauses[0] : { $and: seriesOrClauses },
+                '_id'
+            );
+            matchedSeriesIds = matchedSeries.map(s => s._id);
+        }
+
+        const query = buildFilterQuery(req.query, userFavIds, matchedSeriesIds);
         const [videos, count] = await Promise.all([
             Video.find(query)
                 .sort({ [sortBy]: sortOrder })

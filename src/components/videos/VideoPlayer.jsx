@@ -337,7 +337,7 @@ function VideoPlayer({
                 historyAPI.saveProgress(videoId, d, d).catch(() => {});
             }
 
-            if (hasNext) {
+            if (hasNext && autoPlayNext) {
                 setEndedState('countdown');
                 setCountdown(10);
                 if (countdownRef.current) clearInterval(countdownRef.current);

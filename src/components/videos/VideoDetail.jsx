@@ -15,6 +15,7 @@ import { formatDuration } from "../../utils/format";
 import { useAuth } from "../../context/AuthContext";
 import { UserAvatarButton } from "../Home";
 import UserProfile from "../auth/UserProfile";
+import useMyStorage from "../../utils/localStorage";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SeriesDetail — shown when navigating to /series/:id
@@ -36,10 +37,10 @@ export function SeriesDetail() {
     // Episode info panel: expanded by default on sm+ screens, collapsed on mobile
     const [infoExpanded, setInfoExpanded] = useState(() => window.innerWidth >= 640);
 
-    const [epSortBy,    setEpSortBy]    = useState('default');
-    const [epOrder,     setEpOrder]     = useState('asc');
-    const [epHlsFilter, setEpHlsFilter] = useState('');
-    const [autoPlay,    setAutoPlay]    = useState(false);
+    const [epSortBy, setEpSortBy] = useMyStorage('vibeflix_ep_sort_by', 'default');
+    const [epOrder, setEpOrder] = useMyStorage('vibeflix_ep_order', 'asc');
+    const [epHlsFilter, setEpHlsFilter] = useMyStorage('vibeflix_ep_hls_filter', 'transcoded');
+    const [autoPlay, setAutoPlay] = useMyStorage('vibeflix_ep_auto_play', true);
 
     const [episodeProgressMap, setEpisodeProgressMap] = useState({});
     const [showProfile, setShowProfile] = useState(false);
@@ -265,12 +266,10 @@ export function SeriesDetail() {
         acc[s].push(ep);
         return acc;
     }, {});
-    const seasons    = Object.keys(episodesBySeason).map(Number).sort((a, b) => a - b);
-    const currentIdx = episodes.findIndex(e => e._id === currentEpisode?._id);
+    const seasons = Object.keys(episodesBySeason).map(Number).sort((a, b) => a - b);
 
-    const handlePrevEpisode = () => { if (currentIdx > 0) handleEpisodeSelect(episodes[currentIdx - 1]); };
-    const handleNextEpisode = () => { if (currentIdx < episodes.length - 1) handleEpisodeSelect(episodes[currentIdx + 1]); };
-
+    // sortedSeasonEpisodes must be derived BEFORE the nav handlers so that
+    // prev/next follow the current sort & filter order shown in the episode list.
     const sortedSeasonEpisodes = React.useMemo(() => {
         let list = [...(episodesBySeason[selectedSeason] || [])];
         if (epHlsFilter === 'transcoded')     list = list.filter(ep => ep.hlsStatus === 'ready');
@@ -283,6 +282,13 @@ export function SeriesDetail() {
         if (epOrder === 'desc') list.reverse();
         return list;
     }, [episodesBySeason, selectedSeason, epSortBy, epOrder, epHlsFilter]);
+
+    // Navigation follows the sorted/filtered list visible to the user,
+    // not the raw episode order from the server.
+    const currentIdx = sortedSeasonEpisodes.findIndex(e => e._id === currentEpisode?._id);
+
+    const handlePrevEpisode = () => { if (currentIdx > 0) handleEpisodeSelect(sortedSeasonEpisodes[currentIdx - 1]); };
+    const handleNextEpisode = () => { if (currentIdx < sortedSeasonEpisodes.length - 1) handleEpisodeSelect(sortedSeasonEpisodes[currentIdx + 1]); };
 
     // ── Early returns ─────────────────────────────────────────────────────────
     if (loading) return <LoadingScreen />;
@@ -357,9 +363,9 @@ export function SeriesDetail() {
                                 }
                                 availableQualities={currentEpisode.resolutions?.map(r => r.quality) || []}
                                 onPrevious={currentIdx > 0 ? handlePrevEpisode : null}
-                                onNext={currentIdx < episodes.length - 1 ? handleNextEpisode : null}
+                                onNext={currentIdx < sortedSeasonEpisodes.length - 1 ? handleNextEpisode : null}
                                 hasPrevious={currentIdx > 0}
-                                hasNext={currentIdx < episodes.length - 1}
+                                hasNext={currentIdx < sortedSeasonEpisodes.length - 1}
                                 autoPlayNext={autoPlay}
                                 onView={() => videoAPI.trackView(currentEpisode._id)}
                             />
@@ -411,7 +417,7 @@ export function SeriesDetail() {
                                     </div>
                                 </div>
 
-                                <div className={`flex items-center gap-1 pt-0.5 ${infoExpanded ? 'flex-1' : 'shrink-0'}`}>
+                                <div className="flex items-center gap-1 pt-0.5 shrink-0">
                                     {(infoExpanded || isXl) && (
                                         <>
                                             {isAdmin && (
@@ -549,7 +555,7 @@ export function SeriesDetail() {
                                 <span className="text-sm font-semibold flex-1">
                                     Episodes
                                     <span className="ml-1.5 text-slate-500 text-xs font-normal">
-                                        ({episodes.length})
+                                        ({sortedSeasonEpisodes.length})
                                     </span>
                                 </span>
 
