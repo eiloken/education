@@ -20,10 +20,13 @@ import VideoCard from "./videos/VideoCard.jsx";
 // ─── Util ─────────────────────────────────────────────────────────────────────
 const daysAgoISO = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString(); };
 
+// FIX #1: New Arrivals now sorts by 'lastEpisodeAt' (computed in the series
+// aggregation pipeline as $max of episodes.createdAt) so series bubble up
+// whenever a new episode is added, not only when the series itself was created.
 const SECTIONS = [
-    { id: 'newest',        title: 'New Arrivals',        icon: Clock,       getParams: () => ({ sortBy: 'createdAt', order: 'desc' }) },
-    { id: 'trending_week', title: 'Trending This Week', icon: TrendingUp, getParams: () => ({ sortBy: 'views', order: 'desc', dateFrom: daysAgoISO(7) }) },
-    { id: 'mostViewed',    title: 'Most Viewed',         icon: Flame,       getParams: () => ({ sortBy: 'views', order: 'desc' }) },
+    { id: 'newest', title: 'New Arrivals', icon: Clock, getParams: () => ({ sortBy: 'lastEpisodeAt', order: 'desc' }) },
+    { id: 'trending_week', title: 'Trending This Week',  icon: TrendingUp,  getParams: () => ({ sortBy: 'views', order: 'desc', dateFrom: daysAgoISO(7) }) },
+    { id: 'mostViewed', title: 'Most Viewed', icon: Flame, getParams: () => ({ sortBy: 'views', order: 'desc' }) },
 ];
 
 // Admin-only views beyond the default series browser
@@ -44,10 +47,10 @@ function useActivityPing() {
             }
         };
         window.addEventListener('mousemove', fire, { passive: true });
-        window.addEventListener('keydown',   fire, { passive: true });
+        window.addEventListener('keydown', fire, { passive: true });
         return () => {
             window.removeEventListener('mousemove', fire);
-            window.removeEventListener('keydown',   fire);
+            window.removeEventListener('keydown', fire);
         };
     }, []);
 }
@@ -55,10 +58,11 @@ function useActivityPing() {
 // ─── HomeSection ──────────────────────────────────────────────────────────────
 function HomeSection({ section, items, cardProps, handleShowAll, handleToggleFavoriteSeries }) {
     const rowRef = useRef(null);
-    const [canLeft,  setCanLeft]  = useState(false);
+    const [canLeft, setCanLeft] = useState(false);
     const [canRight, setCanRight] = useState(false);
     if (items.length === 0) return null;
     const Icon = section.icon;
+
     return (
         <section>
             <div className="flex items-center justify-between gap-2 mb-3 min-w-0">
@@ -174,25 +178,23 @@ function Home() {
 
     const [showProfile, setShowProfile] = useState(false);
 
-    const [sectionsData,    setSectionsData]    = useState({});
+    const [sectionsData, setSectionsData] = useState({});
     const [sectionsLoading, setSectionsLoading] = useState(true);
 
     const [searchParams, setSearchParams] = useSearchParams();
 
-    const homeMode        = searchParams.get('mode') || 'home';
+    const homeMode = searchParams.get('mode') || 'home';
     const detailSectionId = searchParams.get('section');
-    const detailSection   = SECTIONS.find(s => s.id === detailSectionId) || null;
-    const seriesPage      = parseInt(searchParams.get('seriesPage') || '1', 10);
+    const detailSection = SECTIONS.find(s => s.id === detailSectionId) || null;
+    const seriesPage = parseInt(searchParams.get('seriesPage') || '1', 10);
 
-    // Admin view mode (dashboard / requests) stored in 'view' param
-    const viewParam  = searchParams.get('view');
-    const adminView  = isAdmin && ADMIN_MODES.some(m => m.value === viewParam) ? viewParam : null;
+    const viewParam = searchParams.get('view');
+    const adminView = isAdmin && ADMIN_MODES.some(m => m.value === viewParam) ? viewParam : null;
 
     const filtersKey = searchParams.toString();
     // eslint-disable-next-line react-hooks/exhaustive-deps
     const filters = useMemo(() => paramsToFilters(searchParams), [filtersKey]);
 
-    // ── URL mutation helpers ───────────────────────────────────────────────────
     const updateParams = useCallback((updates) => {
         setSearchParams(prev => {
             const next = new URLSearchParams(prev);
@@ -201,19 +203,19 @@ function Home() {
         }, { replace: false });
     }, [setSearchParams]);
 
-    const [seriesList,      setSeriesList]       = useState([]);
-    const [seriesLoading,   setSeriesLoading]    = useState(false);
-    const [seriesTotalPages,setSeriesTotalPages] = useState(1);
+    const [seriesList, setSeriesList] = useState([]);
+    const [seriesLoading, setSeriesLoading] = useState(false);
+    const [seriesTotalPages, setSeriesTotalPages] = useState(1);
 
-    const [videoList,       setVideoList]        = useState([]);
-    const [videoLoading,    setVideoLoading]     = useState(false);
-    const [videoTotalPages, setVideoTotalPages]  = useState(1);
+    const [videoList, setVideoList] = useState([]);
+    const [videoLoading, setVideoLoading] = useState(false);
+    const [videoTotalPages, setVideoTotalPages] = useState(1);
 
-    const [showFilters,     setShowFilters]      = useState(false);
-    const [searchTerm,      setSearchTerm]       = useState(filters.search || '');
-    const [showQuickSearch, setShowQuickSearch]  = useState(false);
+    const [showFilters, setShowFilters] = useState(false);
+    const [searchTerm, setSearchTerm] = useState(filters.search || '');
+    const [showQuickSearch, setShowQuickSearch] = useState(false);
     const quickSearchRef = useRef(null);
-    const [showScrollTop,   setShowScrollTop]    = useState(false);
+    const [showScrollTop, setShowScrollTop] = useState(false);
 
     const hasActiveFilters = useCallback((f) =>
         f.tags?.length > 0 || f.tagsExclude?.length > 0 ||
@@ -225,22 +227,22 @@ function Home() {
 
     const buildApiParams = useCallback((extra = {}) => ({
         limit: 20,
-        search:            filters.search         || undefined,
-        tags:              filters.tags?.join(',')           || undefined,
-        tagsExclude:       filters.tagsExclude?.join(',')    || undefined,
-        studios:           filters.studios?.join(',')        || undefined,
-        studiosExclude:    filters.studiosExclude?.join(',') || undefined,
-        actors:            filters.actors?.join(',')         || undefined,
-        actorsExclude:     filters.actorsExclude?.join(',')  || undefined,
-        characters:        filters.characters?.join(',')     || undefined,
+        search: filters.search || undefined,
+        tags: filters.tags?.join(',') || undefined,
+        tagsExclude: filters.tagsExclude?.join(',') || undefined,
+        studios: filters.studios?.join(',') || undefined,
+        studiosExclude: filters.studiosExclude?.join(',') || undefined,
+        actors: filters.actors?.join(',') || undefined,
+        actorsExclude: filters.actorsExclude?.join(',') || undefined,
+        characters: filters.characters?.join(',') || undefined,
         charactersExclude: filters.charactersExclude?.join(',') || undefined,
-        year:              filters.year           || undefined,
-        favorite:          filters.favorite       || undefined,
-        filterMode:        filters.filterMode,
-        sortBy:            filters.sortBy,
-        order:             filters.order,
-        durationFilter:    filters.durationFilter || undefined,
-        hlsFilter:         filters.hlsFilter      || undefined,
+        year: filters.year || undefined,
+        favorite: filters.favorite || undefined,
+        filterMode: filters.filterMode,
+        sortBy: filters.sortBy,
+        order: filters.order,
+        durationFilter: filters.durationFilter || undefined,
+        hlsFilter: filters.hlsFilter || undefined,
         ...extra,
     }), [filters]);
 
@@ -371,11 +373,11 @@ function Home() {
             [field]: (filters[field] || []).filter?.((x) => x !== value) ?? filters[field],
             [`${field}Exclude`]: (filters[`${field}Exclude`] || []).filter?.((x) => x !== value),
         };
-        if (field === 'year')           { updated.year           = ''; }
-        if (field === 'favorite')       { updated.favorite       = false; }
-        if (field === 'search')         { updated.search         = ''; setSearchTerm(''); }
+        if (field === 'year') { updated.year = ''; }
+        if (field === 'favorite') { updated.favorite = false; }
+        if (field === 'search') { updated.search = ''; setSearchTerm(''); }
         if (field === 'durationFilter') { updated.durationFilter = ''; }
-        if (field === 'hlsFilter')      { updated.hlsFilter      = ''; }
+        if (field === 'hlsFilter') { updated.hlsFilter = ''; }
         handleFilterChange(updated);
     };
 
@@ -394,10 +396,10 @@ function Home() {
     const hasPendingSearch = searchTerm !== (filters.search || '');
 
     const cardProps = {
-        onActorClick:     v => handleChipClick('actors',     v),
+        onActorClick: v => handleChipClick('actors', v),
         onCharacterClick: v => handleChipClick('characters', v),
-        onStudioClick:    v => handleChipClick('studios',    v),
-        onTagClick:       v => handleChipClick('tags',       v),
+        onStudioClick: v => handleChipClick('studios', v),
+        onTagClick: v => handleChipClick('tags', v),
     };
 
     if (authLoading) {
@@ -485,9 +487,7 @@ function Home() {
             <main className="mx-auto p-3 sm:p-4">
                 {isAdmin && homeMode !== 'detail' && homeMode !== 'filtered' && (
                     <div className="flex-1 flex gap-2 items-center justify-between mb-4">
-                        {/* Admin mode tabs */}
                         <div className="flex gap-1 bg-slate-900 p-1 rounded-lg shrink-0">
-                            {/* Default: browse series */}
                             <button
                                 onClick={() => updateParams({ view: null, mode: 'home', section: null, seriesPage: '1' })}
                                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition ${
@@ -510,7 +510,6 @@ function Home() {
                             ))}
                         </div>
 
-                        {/* Upload button — admin only, not in admin views */}
                         {!isAdminView && (
                             <div className="flex items-center gap-1.5 p-1 rounded-lg bg-slate-900">
                                 <button
@@ -525,7 +524,6 @@ function Home() {
                     </div>
                 )}
 
-                {/* ── Admin views ──────────────────────────────────────────── */}
                 {adminView === 'dashboard' ? (
                     <Dashboard />
                 ) : adminView === 'requests' ? (

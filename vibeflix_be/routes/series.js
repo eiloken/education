@@ -13,12 +13,12 @@ const router = express.Router();
 
 const thumbnailStorage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, thumbnailDir),
-    filename:    (req, file, cb) => cb(null, `SERIES-THUMB-${uuidv4()}${path.extname(file.originalname)}`),
+    filename: (req, file, cb) => cb(null, `SERIES-THUMB-${uuidv4()}${path.extname(file.originalname)}`),
 });
 
 const uploadThumb = multer({
     storage: thumbnailStorage,
-    limits:  { fileSize: 10 * 1024 * 1024 },
+    limits: { fileSize: 10 * 1024 * 1024 },
     fileFilter: (req, file, cb) => {
         /jpeg|jpg|png|webp/.test(path.extname(file.originalname).toLowerCase())
             ? cb(null, true)
@@ -26,7 +26,7 @@ const uploadThumb = multer({
     },
 });
 
-// ─── Smart multi-field search — same logic as videos.js ──────────────────────
+// ─── Smart multi-field search ─────────────────────────────────────────────────
 function applySmartSearch(query, search) {
     if (!search?.trim()) return;
     const terms = search.trim().split(/\s+/).filter(Boolean);
@@ -35,12 +35,12 @@ function applySmartSearch(query, search) {
         const r = new RegExp(escaped, 'i');
         return {
             $or: [
-                { title:       r },
+                { title: r },
                 { description: r },
-                { tags:        r },
-                { studios:     r },
-                { actors:      r },
-                { characters:  r },
+                { tags: r },
+                { studios: r },
+                { actors: r },
+                { characters: r },
             ],
         };
     });
@@ -59,24 +59,24 @@ function buildFilterQuery(params, userFavIds = null) {
         year, favorite, search, filterMode = 'or', dateFrom,
     } = params;
 
-    const op    = filterMode === 'and' ? '$all' : '$in';
+    const op = filterMode === 'and' ? '$all' : '$in';
     const query = {};
 
     const applyField = (f, inc, exc) => {
         const c = {};
-        if (inc) c[op]     = inc.split(',').filter(Boolean);
+        if (inc) c[op] = inc.split(',').filter(Boolean);
         if (exc) c['$nin'] = exc.split(',').filter(Boolean);
         if (Object.keys(c).length) query[f] = c;
     };
 
-    applyField('tags',       tags,       tagsExclude);
-    applyField('studios',    studios,    studiosExclude);
-    applyField('actors',     actors,     actorsExclude);
+    applyField('tags', tags, tagsExclude);
+    applyField('studios', studios, studiosExclude);
+    applyField('actors', actors, actorsExclude);
     applyField('characters', characters, charactersExclude);
 
-    if (year)     query.year      = parseInt(year);
+    if (year) query.year = parseInt(year);
     if (dateFrom) query.updatedAt = { $gte: new Date(dateFrom) };
-    if (search)   applySmartSearch(query, search);
+    if (search) applySmartSearch(query, search);
 
     if (favorite === 'true') {
         query._id = { $in: userFavIds ?? [] };
@@ -94,14 +94,22 @@ router.get("/", async (req, res) => {
         const lim  = parseInt(limit);
 
         let userFavIds = null;
-        let favSet     = new Set();
+        let favSet = new Set();
         if (req.user) {
             const favs = await Favorite.find({ userId: req.user._id, itemType: 'series' }, 'itemId');
             userFavIds = favs.map(f => f.itemId);
-            favSet     = new Set(userFavIds.map(id => id.toString()));
+            favSet = new Set(userFavIds.map(id => id.toString()));
         }
 
         const query = buildFilterQuery(req.query, userFavIds);
+
+        // FIX #1: Map sortBy values to the correct computed/stored fields.
+        // 'createdAt' on series now sorts by lastEpisodeAt so New Arrivals
+        // reflects when the most recent episode was added, not when the series
+        // record itself was created.
+        const sortField = sortBy === 'views' ? 'totalViews'
+            : sortBy === 'createdAt' ? 'lastEpisodeAt'
+            : sortBy;
 
         const pipeline = [
             { $match: query },
@@ -109,8 +117,12 @@ router.get("/", async (req, res) => {
             {
                 $addFields: {
                     episodeCount: { $size: '$episodes' },
-                    totalViews:   { $sum: '$episodes.views' },
-                    seasonCount:  {
+                    totalViews: { $sum: '$episodes.views' },
+                    // Most recent episode createdAt — drives the "New Arrivals" sort
+                    lastEpisodeAt: {
+                        $max: '$episodes.createdAt',
+                    },
+                    seasonCount: {
                         $max: [1, {
                             $size: {
                                 $filter: {
@@ -124,7 +136,7 @@ router.get("/", async (req, res) => {
                 },
             },
             { $project: { episodes: 0 } },
-            { $sort: { [sortBy === 'views' ? 'totalViews' : sortBy]: sortOrder } },
+            { $sort: { [sortField]: sortOrder } },
             { $facet: { data: [{ $skip: skip }, { $limit: lim }], count: [{ $count: 'total' }] } },
         ];
 
@@ -148,14 +160,13 @@ router.get("/:id", async (req, res) => {
         if (!series) return res.status(404).json({ error: 'Series not found' });
 
         const episodes = await Video.find({ seriesId: series._id }).sort({ seasonNumber: 1, episodeNumber: 1 });
-        const seasons  = [...new Set(episodes.map(e => e.seasonNumber || 1))].sort((a, b) => a - b);
+        const seasons = [...new Set(episodes.map(e => e.seasonNumber || 1))].sort((a, b) => a - b);
 
         let isFavorite = false;
         if (req.user) {
             isFavorite = !!(await Favorite.exists({ userId: req.user._id, itemId: series._id, itemType: 'series' }));
         }
 
-        // Annotate episodes with user favorites
         let epFavSet = new Set();
         if (req.user) {
             const epFavs = await Favorite.find({ userId: req.user._id, itemType: 'video' }, 'itemId');
@@ -179,13 +190,13 @@ router.post("/", requireAdmin, uploadThumb.single('thumbnail'), async (req, res)
         if (!title?.trim()) return res.status(400).json({ error: 'Title is required' });
 
         const data = {
-            title:       title.trim(),
+            title: title.trim(),
             description: description?.trim() || '',
-            tags:        tags        ? JSON.parse(tags)        : [],
-            studios:     studios     ? JSON.parse(studios)     : [],
-            actors:      actors      ? JSON.parse(actors)      : [],
-            characters:  characters  ? JSON.parse(characters)  : [],
-            year:        year        ? parseInt(year)          : null,
+            tags: tags ? JSON.parse(tags) : [],
+            studios: studios ? JSON.parse(studios) : [],
+            actors: actors ? JSON.parse(actors) : [],
+            characters: characters ? JSON.parse(characters) : [],
+            year: year ? parseInt(year) : null,
         };
         if (req.file) data.thumbnailPath = req.file.filename;
 
@@ -205,13 +216,13 @@ router.put("/:id", requireAdmin, uploadThumb.single('thumbnail'), async (req, re
 
         const { title, description, tags, studios, actors, characters, year } = req.body;
         const updateData = {};
-        if (title       !== undefined) updateData.title       = title.trim();
+        if (title !== undefined) updateData.title = title.trim();
         if (description !== undefined) updateData.description = description.trim();
-        if (tags)        updateData.tags       = JSON.parse(tags);
-        if (studios)     updateData.studios    = JSON.parse(studios);
-        if (actors)      updateData.actors     = JSON.parse(actors);
-        if (characters)  updateData.characters = JSON.parse(characters);
-        if (year        !== undefined) updateData.year = year ? parseInt(year) : null;
+        if (tags) updateData.tags = JSON.parse(tags);
+        if (studios) updateData.studios = JSON.parse(studios);
+        if (actors) updateData.actors = JSON.parse(actors);
+        if (characters) updateData.characters = JSON.parse(characters);
+        if (year !== undefined) updateData.year = year ? parseInt(year) : null;
 
         if (req.file) {
             if (series.thumbnailPath) {
@@ -257,7 +268,6 @@ router.delete("/:id", requireAdmin, async (req, res) => {
         const thumbnailsPath = episodes.map(e => path.join(thumbnailDir, e.thumbnailPath)).filter(Boolean);
         const hlsDirs = episodes.map(e => path.join(uploadDir, 'hls', e._id.toString())).filter(Boolean);
 
-        // Series thumbnail
         if (series.thumbnailPath) {
             const p = path.join(thumbnailDir, series.thumbnailPath);
             if (fs.existsSync(p)) { try { fs.unlinkSync(p); } catch (_) {} }
@@ -271,13 +281,12 @@ router.delete("/:id", requireAdmin, async (req, res) => {
 
         await Series.findByIdAndDelete(req.params.id);
 
-        // Episodes
         await Promise.all([
             ...videosPath.map(p => fs.existsSync(p) ? fs.unlinkSync(p) : Promise.resolve()),
             ...thumbnailsPath.map(p => fs.existsSync(p) ? fs.unlinkSync(p) : Promise.resolve()),
             ...hlsDirs.map(p => fs.existsSync(p) ? fs.rmSync(p, { recursive: true }) : Promise.resolve()),
         ]);
-        
+
         res.json({ success: true, message: 'Series and all episodes deleted' });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -298,9 +307,9 @@ router.get("/:id/episodes", async (req, res) => {
 });
 
 // ─── Metadata endpoints ───────────────────────────────────────────────────────
-router.get('/metadata/:id/tags',       async (req, res) => { try { res.json((await Series.findById(req.params.id).distinct('tags')).filter(Boolean).sort());       } catch (e) { res.status(500).json({ error: e.message }); } });
-router.get('/metadata/:id/studios',    async (req, res) => { try { res.json((await Series.findById(req.params.id).distinct('studios')).filter(Boolean).sort());    } catch (e) { res.status(500).json({ error: e.message }); } });
-router.get('/metadata/:id/actors',     async (req, res) => { try { res.json((await Series.findById(req.params.id).distinct('actors')).filter(Boolean).sort());     } catch (e) { res.status(500).json({ error: e.message }); } });
+router.get('/metadata/:id/tags', async (req, res) => { try { res.json((await Series.findById(req.params.id).distinct('tags')).filter(Boolean).sort()); } catch (e) { res.status(500).json({ error: e.message }); } });
+router.get('/metadata/:id/studios', async (req, res) => { try { res.json((await Series.findById(req.params.id).distinct('studios')).filter(Boolean).sort()); } catch (e) { res.status(500).json({ error: e.message }); } });
+router.get('/metadata/:id/actors', async (req, res) => { try { res.json((await Series.findById(req.params.id).distinct('actors')).filter(Boolean).sort()); } catch (e) { res.status(500).json({ error: e.message }); } });
 router.get('/metadata/:id/characters', async (req, res) => { try { res.json((await Series.findById(req.params.id).distinct('characters')).filter(Boolean).sort()); } catch (e) { res.status(500).json({ error: e.message }); } });
 
 export default router;

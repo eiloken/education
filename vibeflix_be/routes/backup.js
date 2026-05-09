@@ -37,26 +37,25 @@ function sanitize(name) {
         .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
         .replace(/\s+/g, ' ')
         .trim()
-        .slice(0, 100); // cap length for filesystem safety
+        .slice(0, 100);
 }
 
 function getDestPaths(series, ep) {
-    const folder   = sanitize(series?.title || 'No Series');
-    const season   = String(ep.seasonNumber || 1).padStart(2, '0');
-    const epNum    = String(ep.episodeNumber || 0).padStart(2, '0');
-    const epTitle  = sanitize(ep.title || 'Episode');
-    const ext      = path.extname(ep.videoPath || '') || '.mp4';
+    const folder = sanitize(series?.title || 'No Series');
+    const season = String(ep.seasonNumber || 1).padStart(2, '0');
+    const epNum = String(ep.episodeNumber || 0).padStart(2, '0');
+    const epTitle = sanitize(ep.title || 'Episode');
+    const ext = path.extname(ep.videoPath || '') || '.mp4';
     const filename = `S${season}E${epNum} - ${epTitle}${ext}`;
     return { folder, filename };
 }
 
 function freeSpaceBytes(dir) {
     try {
-        // Node 18.12+ — works on Linux, macOS, Windows
         const s = fs.statfsSync(dir);
         return s.bfree * s.bsize;
     } catch {
-        return Infinity; // can't check — let it proceed, copy will fail naturally
+        return Infinity;
     }
 }
 
@@ -67,7 +66,7 @@ function copyStream(src, dest) {
         const cleanup = (err) => {
             rd.destroy();
             wr.destroy();
-            try { fs.unlinkSync(dest); } catch (_) {} // remove partial file
+            try { fs.unlinkSync(dest); } catch (_) {}
             reject(err);
         };
         rd.on('error', cleanup);
@@ -77,12 +76,87 @@ function copyStream(src, dest) {
     });
 }
 
+/**
+ * FIX #4: Recursively mirror a directory from src to dest.
+ * Skips files that already exist with the same size (same skip logic as raw
+ * video backup). Returns { copied, skipped, failed } counts.
+ */
+async function mirrorDirectory(srcDir, destDir, label) {
+    let copied = 0, skipped = 0, failed = 0;
+
+    if (!fs.existsSync(srcDir)) return { copied, skipped, failed };
+
+    // Walk the source tree
+    const walk = (dir) => {
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        const files = [];
+        for (const entry of entries) {
+            const full = path.join(dir, entry.name);
+            if (entry.isDirectory()) {
+                files.push(...walk(full));
+            } else {
+                files.push(full);
+            }
+        }
+        return files;
+    };
+
+    let allFiles;
+    try {
+        allFiles = walk(srcDir);
+    } catch (err) {
+        return { copied: 0, skipped: 0, failed: 1 };
+    }
+
+    for (const srcFile of allFiles) {
+        if (state.stopRequested) break;
+
+        const rel = path.relative(srcDir, srcFile);
+        const destFile = path.join(destDir, rel);
+        const relLabel = `${label}/${rel}`;
+
+        state.currentFile = relLabel;
+        broadcast();
+
+        // Skip if already backed up with the same size
+        if (fs.existsSync(destFile)) {
+            try {
+                if (fs.statSync(srcFile).size === fs.statSync(destFile).size) {
+                    skipped++;
+                    continue;
+                }
+            } catch (_) {}
+        }
+
+        try {
+            fs.mkdirSync(path.dirname(destFile), { recursive: true });
+            await copyStream(srcFile, destFile);
+            copied++;
+        } catch (err) {
+            const msg = err.message || String(err);
+            const isSpace = /ENOSPC|no space/i.test(msg);
+            state.errors.push(isSpace
+                ? `❌ Disk full — stopped at HLS: ${relLabel}`
+                : `HLS copy failed [${relLabel}]: ${msg}`
+            );
+            failed++;
+            if (isSpace) {
+                state.status = 'error';
+                state.stopRequested = true;
+            }
+        }
+
+        broadcast();
+    }
+
+    return { copied, skipped, failed };
+}
+
 async function runBackup(backupDir) {
     try {
         fs.mkdirSync(backupDir, { recursive: true });
 
-        // Load all videos + their series
-        const videos    = await Video.find({ videoPath: { $exists: true, $ne: null } }).lean();
+        const videos = await Video.find({ videoPath: { $exists: true, $ne: null } }).lean();
         const seriesIds = [...new Set(videos.map(v => v.seriesId?.toString()).filter(Boolean))];
         const seriesMap = {};
         if (seriesIds.length) {
@@ -90,21 +164,27 @@ async function runBackup(backupDir) {
             list.forEach(s => (seriesMap[s._id.toString()] = s));
         }
 
-        state.total = videos.length;
+        // FIX #4: Count both raw files and HLS-ready videos so the progress
+        // total reflects all work that will be done.
+        const hlsVideos = videos.filter(v => v.hlsStatus === 'ready' && v.hlsPath);
+        state.total = videos.length + hlsVideos.length;
         broadcast();
 
         // ── Disk-space preflight ───────────────────────────────────────────────
-        const neededBytes = videos.reduce((s, v) => s + (v.fileSize || 0), 0);
-        const freeBytes   = freeSpaceBytes(backupDir);
-        const toGB        = (b) => (b / 1_073_741_824).toFixed(2) + ' GB';
+        // Estimate raw sizes + rough HLS size (HLS is typically ~1.2× the raw)
+        const rawBytes = videos.reduce((s, v) => s + (v.fileSize || 0), 0);
+        const hlsEstimatedBytes = hlsVideos.reduce((s, v) => s + (v.fileSize || 0) * 1.2, 0);
+        const neededBytes = rawBytes + hlsEstimatedBytes;
+        const freeBytes = freeSpaceBytes(backupDir);
+        const toGB = (b) => (b / 1_073_741_824).toFixed(2) + ' GB';
 
-        if (freeBytes !== Infinity && freeBytes < neededBytes * 1.05) { // 5% buffer
+        if (freeBytes !== Infinity && freeBytes < neededBytes * 1.05) {
             throw new Error(
                 `Not enough disk space — need ~${toGB(neededBytes)}, only ${toGB(freeBytes)} free on backup volume`
             );
         }
 
-        // ── Copy loop ──────────────────────────────────────────────────────────
+        // ── Raw video copy loop ────────────────────────────────────────────────
         for (const video of videos) {
             if (state.stopRequested) {
                 state.status = 'stopped';
@@ -127,14 +207,11 @@ async function runBackup(backupDir) {
             }
 
             const destFolder = path.join(backupDir, folder);
-            const destPath   = path.join(destFolder, filename);
+            const destPath = path.join(destFolder, filename);
 
-            // ── Skip if already backed up with same size ───────────────────────
             if (fs.existsSync(destPath)) {
                 try {
-                    const srcSize  = fs.statSync(srcPath).size;
-                    const destSize = fs.statSync(destPath).size;
-                    if (srcSize === destSize) {
+                    if (fs.statSync(srcPath).size === fs.statSync(destPath).size) {
                         state.skipped++;
                         state.done++;
                         broadcast();
@@ -149,7 +226,6 @@ async function runBackup(backupDir) {
                 state.done++;
             } catch (err) {
                 const msg = err.message || String(err);
-                // Surface disk-full errors prominently
                 const isSpace = /ENOSPC|no space/i.test(msg);
                 state.errors.push(isSpace
                     ? `❌ Disk full — stopped at: ${filename}`
@@ -160,11 +236,52 @@ async function runBackup(backupDir) {
 
                 if (isSpace) {
                     state.status = 'error';
-                    state.stopRequested = true; // abort remaining files
+                    state.stopRequested = true;
                 }
             }
 
             broadcast();
+        }
+
+        // ── FIX #4: HLS transcode data backup ─────────────────────────────────
+        // Mirror each video's HLS folder into a parallel `_hls` tree inside the
+        // backup, preserving the same series/episode folder structure so it's
+        // easy to find next to the raw file.
+        if (!state.stopRequested) {
+            for (const video of hlsVideos) {
+                if (state.stopRequested) {
+                    state.status = 'stopped';
+                    break;
+                }
+
+                const series = seriesMap[video.seriesId?.toString()] || null;
+                const { folder, filename } = getDestPaths(series, video);
+                // Strip extension to get a base name for the HLS folder
+                const hlsBaseName = filename.replace(/\.[^.]+$/, '');
+
+                const srcHlsDir  = path.join(uploadDir, 'hls', video._id.toString());
+                // Stored alongside the raw video under a sibling `_hls` directory
+                const destHlsDir = path.join(backupDir, folder, '_hls', hlsBaseName);
+
+                state.currentFile = `${folder}/_hls/${hlsBaseName}/…`;
+                broadcast();
+
+                const { copied, skipped, failed } = await mirrorDirectory(
+                    srcHlsDir,
+                    destHlsDir,
+                    `${folder}/_hls/${hlsBaseName}`
+                );
+
+                state.skipped += skipped;
+                state.failed += failed;
+                state.done++;
+
+                if (failed > 0) {
+                    // Errors were already pushed inside mirrorDirectory
+                }
+
+                broadcast();
+            }
         }
 
         if (state.status === 'running') {
@@ -174,21 +291,20 @@ async function runBackup(backupDir) {
         state.errors.push(err.message);
         state.status = 'error';
     } finally {
-        state.running     = false;
+        state.running = false;
         state.currentFile = null;
-        state.finishedAt  = new Date().toISOString();
+        state.finishedAt = new Date().toISOString();
         broadcast();
     }
 }
 
 // ─── GET /api/backup/status  (SSE — real-time progress) ──────────────────────
 router.get('/status', requireAdmin, (req, res) => {
-    res.setHeader('Content-Type',  'text/event-stream');
+    res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection',    'keep-alive');
+    res.setHeader('Connection', 'keep-alive');
     res.flushHeaders();
 
-    // Immediately push current state so the client doesn't wait
     res.write(`data: ${JSON.stringify(state)}\n\n`);
 
     sseClients.add(res);
@@ -208,7 +324,6 @@ router.post('/start', requireAdmin, async (req, res) => {
         return res.status(500).json({ error: 'Backup directory not configured' });
     }
 
-    // Reset state
     state = {
         running: true, stopRequested: false,
         total: 0, done: 0, failed: 0, skipped: 0,
@@ -220,7 +335,6 @@ router.post('/start', requireAdmin, async (req, res) => {
 
     res.json({ success: true, message: 'Backup started' });
 
-    // Fire-and-forget — progress goes via SSE
     runBackup(backupDir).catch(console.error);
 });
 

@@ -60,9 +60,9 @@ let   activeJobs     = 0;
 const activeCommands = new Map(); // videoId (string) → Ffmpeg command | null
 
 // ─── Rich Queue Display State ─────────────────────────────────────────────────
-const jobMeta     = new Map(); // id → { title, thumbnailPath }
-const jobProgress = new Map(); // id → { plannedResolutions[], currentResolution, resolutionPercent, completedResolutions[] }
-const recentlyDone = [];       // last 20: { videoId, title, thumbnailPath, completedAt, success, labels?, error? }
+const jobMeta      = new Map(); // id → { title, thumbnailPath }
+const jobProgress  = new Map(); // id → { plannedResolutions[], currentResolution, resolutionPercent, completedResolutions[] }
+const recentlyDone = [];        // last 20: { videoId, title, thumbnailPath, completedAt, success, labels?, error? }
 const queueSseSet  = new Set();
 const _progThrottle = new Map();
 
@@ -80,17 +80,18 @@ function emitQueueProgress(videoId) {
 }
 
 // ─── Hardware Encoder Detection ───────────────────────────────────────────────
-// Runs once at startup, caches result for the process lifetime.
-// Priority: NVIDIA NVENC → AMD AMF → Intel QSV → Apple VideoToolbox → CPU
-
 let _hwEncoder = null;
 
 const HW_CANDIDATES = [
     {
         label:   'NVIDIA NVENC',
         encoder: 'h264_nvenc',
-        // Decode on CUDA, keep frames in GPU memory for the encoder
-        extraInputArgs: ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'],
+        // Encode-only mode: let FFmpeg decode/scale in software, then hand
+        // frames to NVENC for encoding. This works regardless of the source
+        // codec/container, unlike the full CUDA pipeline which requires the
+        // source to be CUDA-decodable and crashes with exit code 4294967256
+        // (-40 / ENOMEM) when it gets software frames fed into scale_cuda.
+        extraInputArgs: [],
         extraOutputArgs: [
             '-rc',           'vbr',
             '-rc-lookahead', '32',
@@ -98,8 +99,7 @@ const HW_CANDIDATES = [
             '-temporal_aq',  '1',
             '-b_ref_mode',   'middle',
         ],
-        // NVENC needs its own scale filter to keep frames on-GPU
-        scaleFilter: (h) => `scale_cuda=-2:'min(${h},ih)'`,
+        scaleFilter: (h) => `scale=-2:'min(${h},ih)'`,
     },
     {
         label:   'AMD AMF',
@@ -117,7 +117,7 @@ const HW_CANDIDATES = [
         extraInputArgs: ['-hwaccel', 'qsv', '-hwaccel_output_format', 'qsv'],
         extraOutputArgs: [
             '-preset',         'medium',
-            '-global_quality', '23',  // QSV uses global_quality instead of CRF
+            '-global_quality', '23',
         ],
         scaleFilter: (h) => `scale_qsv=-2:'min(${h},ih)'`,
     },
@@ -126,7 +126,7 @@ const HW_CANDIDATES = [
         encoder: 'h264_videotoolbox',
         extraInputArgs: [],
         extraOutputArgs: [
-            '-q:v',      '65',  // 0–100 scale (not CRF)
+            '-q:v',      '65',
             '-realtime', '0',
         ],
         scaleFilter: (h) => `scale=-2:'min(${h},ih)'`,
@@ -144,10 +144,6 @@ const CPU_FALLBACK = {
     scaleFilter: (h) => `scale=-2:'min(${h},ih)'`,
 };
 
-/**
- * Test whether a named FFmpeg encoder works on this machine.
- * Spawns a tiny 1-frame null transcode — fast and leaves no files.
- */
 function testEncoder(encoderName) {
     return new Promise((resolve) => {
         const proc = spawn(ffmpegPath, [
@@ -175,10 +171,6 @@ function testEncoder(encoderName) {
     });
 }
 
-/**
- * Detect the best available encoder and cache the result.
- * Returns the cached result on subsequent calls — detection only runs once.
- */
 async function detectHWEncoder() {
     if (_hwEncoder) return _hwEncoder;
 
@@ -195,7 +187,6 @@ async function detectHWEncoder() {
     return _hwEncoder;
 }
 
-// Warm up detection at startup so the first transcode doesn't wait for it
 detectHWEncoder().catch(() => {});
 
 // ─── General Helpers ──────────────────────────────────────────────────────────
@@ -238,11 +229,16 @@ function deleteHlsFolder(videoId) {
 
 // ─── HLS Transcode ────────────────────────────────────────────────────────────
 /**
- * Transcodes a video into HLS segments at up to 3 quality levels using the
- * best available hardware encoder, falling back to CPU if none is detected.
+ * FIX #3: Auto-detects the best resolution the source can actually support
+ * (≤ MAX_TRANSCODE_RES / 1080p) and assigns it the highest quality bitrate tier.
+ * Lower rungs below it still use their standard bitrates.
+ *
+ * Example: a 720p source → ladder is [480p standard, 720p HIGH].
+ *          a 1080p source → ladder is [480p standard, 720p standard, 1080p HIGH].
+ *          a 360p source  → no standard rung fits, so a single rung at 360p gets
+ *                           the highest-tier bitrate.
  */
 async function transcodeToHLS(videoPath, videoId) {
-    // Run ffprobe and encoder detection in parallel — saves ~1s per job
     const [meta, hw] = await Promise.all([
         new Promise((resolve, reject) => {
             Ffmpeg.ffprobe(videoPath, (err, m) => (err ? reject(err) : resolve(m)));
@@ -252,102 +248,157 @@ async function transcodeToHLS(videoPath, videoId) {
 
     const srcHeight = meta.streams.find(s => s.codec_type === 'video')?.height ?? 0;
 
+    // Standard quality ladder (ascending). videoBr/audioBr are used for all
+    // rungs *except* the top one, which gets upgraded to HIGH bitrates.
     const LADDER = [
         { label: '480p',  height: 480,  videoBr: '1200k', audioBr: '128k' },
         { label: '720p',  height: 720,  videoBr: '2500k', audioBr: '128k' },
         { label: '1080p', height: 1080, videoBr: '8000k', audioBr: '192k' },
     ];
 
-    const eligible = LADDER.filter(q => q.height <= srcHeight && q.height <= MAX_TRANSCODE_RES);
-    const rungs = eligible.length > 0
-        ? eligible.slice(-3)
-        : [{ label: `${srcHeight}p`, height: srcHeight, videoBr: '800k', audioBr: '96k' }];
+    // HIGH-quality overrides applied to the top rung
+    const HIGH_VIDEO_BR = '8000k';
+    const HIGH_AUDIO_BR = '192k';
+
+    // Cap at both the source height and the server's MAX_TRANSCODE_RES setting
+    const effectiveCap = Math.min(srcHeight, MAX_TRANSCODE_RES);
+    const eligible = LADDER.filter(q => q.height <= effectiveCap);
+
+    let rungs;
+    if (eligible.length > 0) {
+        // Keep up to 3 rungs; the highest becomes the "best" rung
+        const selected = eligible.slice(-3);
+        rungs = selected.map((q, i) => {
+            const isTop = i === selected.length - 1;
+            return isTop
+                ? { ...q, videoBr: HIGH_VIDEO_BR, audioBr: HIGH_AUDIO_BR }
+                : q;
+        });
+    } else {
+        // Source is smaller than every ladder step — use its native height
+        // at high quality so we don't upscale
+        rungs = [{
+            label:   `${srcHeight}p`,
+            height:  srcHeight,
+            videoBr: HIGH_VIDEO_BR,
+            audioBr: HIGH_AUDIO_BR,
+        }];
+    }
 
     const hlsBase = path.join(uploadDir, 'hls', videoId);
     fs.mkdirSync(hlsBase, { recursive: true });
 
     const generatedLabels = [];
 
-    // Initialise progress entry so the UI knows what resolutions to expect
     jobProgress.set(videoId, {
-        plannedResolutions:    rungs.map(r => r.label),
-        currentResolution:     null,
-        resolutionPercent:     0,
-        completedResolutions:  [],
+        plannedResolutions:   rungs.map(r => r.label),
+        currentResolution:    null,
+        resolutionPercent:    0,
+        completedResolutions: [],
     });
     broadcastQueue();
+
+    // Helper: encode a single rung with a given encoder config.
+    // Returns true on success, throws on cancellation, returns false on
+    // encode error so the caller can decide whether to fallback.
+    const encodeRung = (q, enc, qDir) => new Promise((resolve, reject) => {
+        const cmd = Ffmpeg(videoPath)
+            .inputOptions(enc.extraInputArgs)
+            .outputOptions([
+                `-vf`,       enc.scaleFilter(q.height),
+                `-c:v`,      enc.encoder,
+                ...enc.extraOutputArgs,
+                `-maxrate`,  q.videoBr,
+                `-bufsize`,  `${parseInt(q.videoBr) * 2}k`,
+                `-c:a`,      `aac`,
+                `-b:a`,      q.audioBr,
+                `-ar`,       `48000`,
+                `-hls_time`,             `6`,
+                `-hls_playlist_type`,    `vod`,
+                `-hls_flags`,            `independent_segments`,
+                `-hls_segment_filename`, path.join(qDir, 'seg%03d.ts'),
+            ])
+            .output(path.join(qDir, 'index.m3u8'))
+            .on('progress', (prog) => {
+                const pct = Math.min(Math.round(prog.percent || 0), 99);
+                jobProgress.set(videoId, { ...jobProgress.get(videoId), resolutionPercent: pct });
+                emitQueueProgress(videoId);
+            })
+            .on('end',   () => resolve(true))
+            .on('error', (err) => {
+                // Distinguish cancellation (job removed from activeCommands)
+                // from a plain encode error so we can fallback on the latter.
+                if (!activeCommands.has(videoId)) {
+                    reject(new Error(`Job cancelled for ${videoId}`));
+                } else {
+                    console.error(`  ✖ [${videoId}] ${q.label} failed via ${enc.label}: ${err.message}`);
+                    resolve(false); // signal: retry with CPU
+                }
+            });
+
+        activeCommands.set(videoId, cmd);
+        cmd.run();
+    });
 
     for (const q of rungs) {
         if (!activeCommands.has(videoId)) {
             throw new Error(`Job cancelled for ${videoId}`);
         }
 
-        // Tell the UI which resolution we're starting
         jobProgress.set(videoId, {
             ...jobProgress.get(videoId),
-            currentResolution:  q.label,
-            resolutionPercent:  0,
+            currentResolution: q.label,
+            resolutionPercent: 0,
         });
         broadcastQueue();
 
         const qDir = path.join(hlsBase, q.label);
         fs.mkdirSync(qDir, { recursive: true });
 
-        await new Promise((resolve, reject) => {
-            const cmd = Ffmpeg(videoPath)
-                .inputOptions(hw.extraInputArgs)
-                .outputOptions([
-                    `-vf`,       hw.scaleFilter(q.height),
-                    `-c:v`,      hw.encoder,
-                    ...hw.extraOutputArgs,
-                    `-maxrate`,  q.videoBr,
-                    `-bufsize`,  `${parseInt(q.videoBr) * 2}k`,
-                    `-c:a`,      `aac`,
-                    `-b:a`,      q.audioBr,
-                    `-ar`,       `48000`,
-                    `-hls_time`,             `6`,
-                    `-hls_playlist_type`,    `vod`,
-                    `-hls_flags`,            `independent_segments`,
-                    `-hls_segment_filename`, path.join(qDir, 'seg%03d.ts'),
-                ])
-                .output(path.join(qDir, 'index.m3u8'))
-                .on('progress', (prog) => {
-                    const pct = Math.min(Math.round(prog.percent || 0), 99);
-                    jobProgress.set(videoId, { ...jobProgress.get(videoId), resolutionPercent: pct });
-                    emitQueueProgress(videoId);
-                })
-                .on('end',   () => resolve())
-                .on('error', (err) => {
-                    console.error(`  ✖ [${videoId}] ${q.label} failed via ${hw.label}:`, err.message);
-                    reject(err);
-                });
+        // ── Try primary encoder ──────────────────────────────────────────────
+        let ok = await encodeRung(q, hw, qDir);
 
-            activeCommands.set(videoId, cmd);
-            cmd.run();
-        });
+        // ── Per-rung CPU fallback ────────────────────────────────────────────
+        // If the HW encoder failed (ok===false) and we aren't already on CPU,
+        // wipe the partial rung dir and retry with libx264. This handles cases
+        // where the GPU can encode in general (startup test passed) but chokes
+        // on a specific file (unusual codec, HDR metadata, unsupported profile).
+        if (!ok && hw.encoder !== CPU_FALLBACK.encoder) {
+            console.warn(`  ⚠ [${videoId}] ${q.label} failed via ${hw.label} — retrying with CPU (libx264)`);
+            try { fs.rmSync(qDir, { recursive: true, force: true }); } catch (_) {}
+            fs.mkdirSync(qDir, { recursive: true });
+            jobProgress.set(videoId, { ...jobProgress.get(videoId), resolutionPercent: 0 });
+            broadcastQueue();
+            ok = await encodeRung(q, CPU_FALLBACK, qDir);
+        }
 
-        // Mark this resolution as fully done
+        if (!ok) {
+            // Both HW and CPU failed — surface a clear error
+            throw new Error(`${q.label} encode failed via both ${hw.label} and CPU (libx264)`);
+        }
+
         const cur = jobProgress.get(videoId) || {};
         jobProgress.set(videoId, {
             ...cur,
-            resolutionPercent:   100,
+            resolutionPercent:    100,
             completedResolutions: [...(cur.completedResolutions || []), q.label],
         });
         broadcastQueue();
 
         generatedLabels.push(q.label);
-        console.log(`  ✔ [${videoId}] ${q.label} via ${hw.label}`);
+        console.log(`  ✔ [${videoId}] ${q.label} via ${ok === true && hw.encoder !== CPU_FALLBACK.encoder ? hw.label : 'CPU (libx264)'}`);
     }
 
+    // Build master playlist using actual rung metadata
     const META = {
-        '480p':  { bw: 1400000, res: '854x480'   },
-        '720p':  { bw: 2700000, res: '1280x720'  },
-        '1080p': { bw: 8200000, res: '1920x1080' },
+        '480p':  { bw: 1400000,  res: '854x480'   },
+        '720p':  { bw: 2700000,  res: '1280x720'  },
+        '1080p': { bw: 8200000,  res: '1920x1080' },
     };
 
     let master = '#EXTM3U\n#EXT-X-VERSION:3\n\n';
     for (const q of rungs) {
-        const m = META[q.label] ?? { bw: 1000000, res: `x${q.height}` };
+        const m = META[q.label] ?? { bw: parseInt(q.videoBr) * 1000, res: `x${q.height}` };
         master += `#EXT-X-STREAM-INF:BANDWIDTH=${m.bw},RESOLUTION=${m.res},NAME="${q.label}"\n`;
         master += `${q.label}/index.m3u8\n\n`;
     }
@@ -369,11 +420,10 @@ async function runJob({ videoId, videoPath, resolve, reject }) {
     try {
         await Video.findByIdAndUpdate(videoId, { hlsStatus: 'processing' });
         activeCommands.set(videoId.toString(), null);
-        broadcastQueue(); // job moved from queued → active
+        broadcastQueue();
 
         const labels = await transcodeToHLS(videoPath, videoId.toString());
 
-        // Record as successful completion
         const meta = jobMeta.get(videoId.toString()) || {};
         recentlyDone.push({ videoId: videoId.toString(), ...meta, completedAt: new Date().toISOString(), success: true, labels });
         if (recentlyDone.length > 20) recentlyDone.shift();
@@ -396,14 +446,23 @@ async function runJob({ videoId, videoPath, resolve, reject }) {
         console[cancelled ? 'log' : 'error'](
             `${cancelled ? '⏹' : '❌'} HLS ${cancelled ? 'cancelled' : 'failed'} [${videoId}]: ${err.message}`
         );
+
+        // FIX #2: Always clean up partial HLS data on any failure (not just
+        // cancellation). This prevents corrupt/partial segments from being
+        // served and ensures a clean slate for any future retry.
         if (!cancelled) {
+            deleteHlsFolder(videoId.toString());
             const meta = jobMeta.get(videoId.toString()) || {};
             recentlyDone.push({ videoId: videoId.toString(), ...meta, completedAt: new Date().toISOString(), success: false, error: err.message });
             if (recentlyDone.length > 20) recentlyDone.shift();
         }
+
         await Video.findByIdAndUpdate(videoId, {
-            hlsStatus: cancelled ? 'none' : 'failed',
+            hlsStatus:   cancelled ? 'none' : 'failed',
+            hlsPath:     null,
+            resolutions: [],
         }).catch(() => {});
+
         reject(err);
     } finally {
         const id = videoId.toString();
@@ -411,7 +470,7 @@ async function runJob({ videoId, videoPath, resolve, reject }) {
         jobProgress.delete(id);
         _progThrottle.delete(id);
         activeJobs--;
-        broadcastQueue(); // job finished
+        broadcastQueue();
         drainQueue();
     }
 }
@@ -428,7 +487,6 @@ function startHLSJob(videoId, videoPath) {
 
     Video.findByIdAndUpdate(videoId, { hlsStatus: 'pending' }).catch(() => {});
 
-    // Best-effort metadata prefetch for the UI (fire-and-forget)
     if (!jobMeta.has(id)) {
         Video.findById(videoId, 'title thumbnailPath').lean()
             .then(v => { if (v) jobMeta.set(id, { title: v.title, thumbnailPath: v.thumbnailPath }); })
@@ -438,7 +496,7 @@ function startHLSJob(videoId, videoPath) {
     return new Promise((resolve, reject) => {
         transcodeQueue.push({ videoId, videoPath, resolve, reject });
         console.log(`📥 [${id}] queued (position ${transcodeQueue.length}, active: ${activeJobs}/${MAX_TRANSCODE_JOBS})`);
-        broadcastQueue(); // notify SSE subscribers of new queue entry
+        broadcastQueue();
         drainQueue();
     });
 }
@@ -484,10 +542,8 @@ function getQueueStatus() {
         maxActive: MAX_TRANSCODE_JOBS,
         queued:    transcodeQueue.length,
         encoder:   _hwEncoder?.label ?? 'detecting…',
-        // legacy scalar arrays kept for backward compat
         activeIds: [...activeCommands.keys()],
         queuedIds: transcodeQueue.map(j => j.videoId.toString()),
-        // rich lists for the UI
         processingList,
         queuedList,
         recentlyDone: recentlyDone.slice().reverse().slice(0, 10),
@@ -495,8 +551,6 @@ function getQueueStatus() {
 }
 
 // ─── Search / Filter Helpers ──────────────────────────────────────────────────
-// seriesIds — optional array of Series._id that matched the search term
-// by title, so videos belonging to those series surface in results.
 function applySmartSearch(query, search, seriesIds = []) {
     if (!search?.trim()) return;
     const terms = search.trim().split(/\s+/).filter(Boolean);
@@ -509,7 +563,6 @@ function applySmartSearch(query, search, seriesIds = []) {
                 { studios: r }, { actors: r }, { characters: r },
             ],
         };
-        // For terms that match a series title, also include videos from that series
         if (seriesIds.length > 0) {
             clause.$or.push({ seriesId: { $in: seriesIds } });
         }
@@ -549,12 +602,10 @@ function buildFilterQuery(params, userFavoriteIds = null, seriesIds = []) {
     if (dateFrom) query.updatedAt = { $gte: new Date(dateFrom) };
     if (search)   applySmartSearch(query, search, seriesIds);
 
-    // Duration buckets: short < 15 min | medium 15–60 min | long > 60 min
     if (durationFilter === 'short')  query.duration = { $gt: 0, $lt: 900 };
     if (durationFilter === 'medium') query.duration = { $gte: 900, $lt: 3600 };
     if (durationFilter === 'long')   query.duration = { $gte: 3600 };
 
-    // HLS transcoding filter: 'transcoded' | 'not_transcoded' | '' (all)
     if (hlsFilter === 'transcoded')     query.hlsStatus = 'ready';
     if (hlsFilter === 'not_transcoded') query.hlsStatus = { $in: ['none', 'failed'] };
 
@@ -590,8 +641,6 @@ router.get('/', async (req, res) => {
             favSet     = new Set(userFavIds.map(id => id.toString()));
         }
 
-        // Look up Series whose title matches the search term so that episodes
-        // belonging to a matching series surface in results.
         let matchedSeriesIds = [];
         if (req.query.search?.trim()) {
             const terms = req.query.search.trim().split(/\s+/).filter(Boolean);
@@ -638,7 +687,6 @@ router.get('/transcode-queue/stream', requireAdmin, (req, res) => {
     res.setHeader('Connection',    'keep-alive');
     res.flushHeaders();
 
-    // Immediately push the current state so the client doesn't wait
     res.write(`data: ${JSON.stringify(getQueueStatus())}\n\n`);
 
     queueSseSet.add(res);
@@ -948,7 +996,7 @@ router.delete('/:id', requireAdmin, async (req, res) => {
     }
 });
 
-// ─── GET /api/videos/:id/stream  (raw range stream — HLS fallback) ───────────
+// ─── GET /api/videos/:id/stream ──────────────────────────────────────────────
 router.get('/:id/stream', async (req, res) => {
     try {
         const video = await Video.findById(req.params.id);
@@ -1068,8 +1116,15 @@ router.post('/:id/transcode', requireAdmin, async (req, res) => {
         const videoPath = path.join(uploadDir, video.videoPath);
         if (!fs.existsSync(videoPath)) return res.status(404).json({ error: 'Source file not found' });
 
-        if (video.hlsStatus === 'failed') {
+        // FIX #2: Always wipe any leftover HLS data before re-queuing, whether
+        // the previous attempt failed or was cancelled. This prevents stale
+        // segments from interfering with the new encode.
+        if (['failed', 'none'].includes(video.hlsStatus)) {
             deleteHlsFolder(req.params.id);
+            await Video.findByIdAndUpdate(req.params.id, {
+                hlsPath:     null,
+                resolutions: [],
+            });
         }
 
         startHLSJob(video._id, videoPath).catch(() => {});
@@ -1108,9 +1163,9 @@ router.post('/:id/thumbnails/generate', requireAdmin, async (req, res) => {
         const videoPath = path.join(uploadDir, video.videoPath);
         if (!fs.existsSync(videoPath)) return res.status(404).json({ error: 'Video file not found' });
 
-        const count      = Math.min(parseInt(req.body.count) || 5, 10);
-        const duration   = await getVideoDuration(videoPath);
-        const prefix     = `THUMB-GEN-${video._id}-`;
+        const count    = Math.min(parseInt(req.body.count) || 5, 10);
+        const duration = await getVideoDuration(videoPath);
+        const prefix   = `THUMB-GEN-${video._id}-`;
         const thumbnails = [];
 
         const rangeStart = duration > 10 ? 2 : 0;

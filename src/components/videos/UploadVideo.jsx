@@ -3,11 +3,13 @@ import { useNavigate, useParams } from "react-router-dom";
 import { generalAPI, seriesAPI, videoAPI } from "../../api/api";
 import toast from "react-hot-toast";
 import {
-    ArrowLeft, Check, ChevronDown, Film, ImagePlay, Layers,
+    ArrowLeft, Check, ChevronDown, Eraser, Film, ImagePlay, Layers,
     Loader2,
     Plus, RefreshCw, Search, Sparkles, Upload, X,
 } from "lucide-react";
 import { ThumbnailStrip } from "../series/CreateSeries";
+import { useDebounce } from "../../hooks/debounce";
+import getSuggestions from "../../helpers/search";
 
 // ─── Client-side frame extractor (works before upload) ───────────────────────
 async function extractFrames(file, count = 5) {
@@ -177,38 +179,102 @@ function SeriesSearchSelect({ series, value, onChange, disabled, locked = false 
 }
 
 // ─── TagSection ───────────────────────────────────────────────────────────────
-function TagSection({ title, inputValue, setInputValue, selectedItems, suggestions, placeholder, onSelect, onAdd, disabled }) {
+function TagSection({ title, inputValue, setInputValue, selectedItems, suggestions, onSelect, onAdd, onClear, disabled }) {
     const [matchedItems, setMatchedItems] = useState(suggestions || []);
+    const [showItems, setShowItems] = useState([]);
+    const [targetItem, setTargetItem] = useState(null);
+
+    const searchTerm = useDebounce(inputValue, 300);
 
     useEffect(() => {
-        if (!inputValue) { setMatchedItems(suggestions); return; }
-        const t = setTimeout(() => {
-            setMatchedItems(suggestions.filter(s => s.toLowerCase().includes(inputValue.toLowerCase())));
-        }, 300);
-        return () => clearTimeout(t);
-    }, [inputValue, suggestions]);
+        if (!searchTerm) { setMatchedItems(suggestions); return; }
+        const matched = getSuggestions(searchTerm, suggestions, { limit: 5 });
+        setMatchedItems(matched.map(s => s.value));
+    }, [searchTerm, suggestions]);
 
-    const showItems = [...new Set([...selectedItems, ...matchedItems])];
+    useEffect(() => {
+        const allItems = [...new Set([...selectedItems, ...matchedItems])];
+        setShowItems(allItems);
+        setTargetItem(matchedItems.find(m => !selectedItems.includes(m)));
+    }, [selectedItems, matchedItems]);
+
 
     return (
         <div className="bg-slate-900 rounded-lg p-4 sm:p-5 border border-slate-800">
             <h2 className="text-base sm:text-lg font-semibold mb-3">{title}</h2>
             <div className="space-y-2.5">
                 <div className="flex gap-2">
-                    <input
-                        type="text"
-                        value={inputValue}
-                        onChange={e => setInputValue(e.target.value)}
-                        onKeyDown={e => {
-                            if (e.key !== "Enter") return;
-                            e.preventDefault();
-                            if (matchedItems.length === 0) onAdd();
-                            else if (matchedItems.length === 1) { onSelect?.(matchedItems[0]); setInputValue(""); }
-                        }}
-                        className="flex-1 min-w-0 px-3 py-2 text-sm bg-slate-800 border border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500"
-                        placeholder={placeholder}
-                        disabled={disabled}
-                    />
+                    <div className="relative flex-1">
+                        {!inputValue && (
+                            <div className="absolute inset-0 text-slate-500 px-4 flex text-xs pointer-events-none items-center">
+                                {showItems.length > 0 ? (
+                                    <div className="hidden sm:block">
+                                        Press <kbd className="px-1.5 py-0.5 text-xs font-mono text-slate-500 bg-slate-700 rounded border border-slate-600 mx-1">Enter</kbd> to add, 
+                                        <kbd className="px-1.5 py-0.5 text-xs font-mono text-slate-500 bg-slate-700 rounded border border-slate-600 mx-1">Escape</kbd> to clear input, 
+                                        <kbd className="px-1.5 py-0.5 text-xs font-mono text-slate-500 bg-slate-700 rounded border border-slate-600 mx-1">↑</kbd> or 
+                                        <kbd className="px-1.5 py-0.5 text-xs font-mono text-slate-500 bg-slate-700 rounded border border-slate-600 mx-1">↓</kbd> to navigate
+                                    </div>
+                                ): <>Add new tag</>}
+                                <span className="sm:hidden">Add new tag</span>
+                            </div>
+                        )}
+
+                        <input
+                            type="text"
+                            value={inputValue}
+                            onChange={e => setInputValue(e.target.value)}
+                            onKeyDown={e => {
+                                if (e.key === "Enter") {
+                                    e.preventDefault();
+                                    if (targetItem) onSelect?.(targetItem);
+                                } else if (e.key === "Escape") {
+                                    setInputValue("");
+                                } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                                    e.preventDefault();
+
+                                    const len = showItems.length;
+                                    if (len === 0) return;
+
+                                    const targetIndex = showItems.indexOf(targetItem);
+                                    const delta = e.key === "ArrowDown" ? 1 : -1;
+
+                                    const baseIndex = targetIndex === -1
+                                        ? (delta === 1 ? 0 : len - 1)
+                                        : targetIndex;
+
+                                    const nextIndex = (baseIndex + delta + len) % len;
+                                    setTargetItem(showItems[nextIndex]);
+                                }
+                            }}
+                            className="pr-15 w-full px-3 py-2 text-sm bg-white/10 border border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500"
+                            maxLength={30}
+                            disabled={disabled}
+                        />
+
+                        <div className="absolute top-1/2 right-2 -translate-y-1/2 flex items-center justify-center gap-1.5">
+                            <span className="text-[10px] text-slate-400">{inputValue?.length || 0}/30</span>
+                            {inputValue && (
+                                <button 
+                                    onClick={() => setInputValue("")} 
+                                    disabled={!inputValue || disabled} 
+                                    tabIndex={-1}
+                                >
+                                    <X className="w-3.5 h-3.5 text-slate-400" />
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                    
+                    <button
+                        type="button" 
+                        onClick={onClear}
+                        disabled={disabled || selectedItems.length === 0}
+                        className="shrink-0 px-3 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg transition disabled:opacity-50"
+                        title="Clear"
+                    >
+                        <Eraser className="w-4 h-4" />
+                    </button>
+
                     <button
                         type="button"
                         onClick={onAdd}
@@ -218,6 +284,7 @@ function TagSection({ title, inputValue, setInputValue, selectedItems, suggestio
                         <Plus className="w-4 h-4" />
                     </button>
                 </div>
+
                 {showItems.length > 0 && (
                     <div className="flex flex-wrap gap-1.5">
                         {showItems.map((item, i) => (
@@ -226,10 +293,12 @@ function TagSection({ title, inputValue, setInputValue, selectedItems, suggestio
                                 type="button"
                                 onClick={() => onSelect?.(item)}
                                 disabled={disabled}
-                                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium cursor-pointer border transition disabled:opacity-50 disabled:cursor-not-allowed ${
+                                className={`relative flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium cursor-pointer border transition disabled:opacity-50 target:outline-none disabled:cursor-not-allowed ${
                                     selectedItems.includes(item)
                                         ? "bg-red-500 border-red-500 text-white"
                                         : "bg-slate-800 border-slate-700 text-slate-300 hover:border-red-500"
+                                } ${
+                                    item === targetItem && "ring-2 ring-offset-2 ring-red-400"
                                 }`}
                             >
                                 {item}
@@ -859,7 +928,7 @@ function UploadVideo({ mode = "new" }) {
                     <div className="bg-slate-900 rounded-lg p-4 sm:p-5 border border-slate-800">
                         <h2 className="text-base sm:text-lg font-semibold mb-3">Video Info</h2>
                         <div className="space-y-3">
-                            <div>
+                            <div className="overflow-hidden">
                                 <label className="block text-xs sm:text-sm font-medium text-slate-300 mb-1">
                                     {(mode === "add-episode" || (mode !== "edit" && assignToSeries)) ? "Episode Title *" : "Title *"}
                                 </label>
@@ -881,7 +950,8 @@ function UploadVideo({ mode = "new" }) {
                                                 ? availableSeries.find(s => s._id === formData.seriesId)?.title
                                                 : (mode === "edit" && assignToSeries && formData.seriesId)
                                                     ? availableSeries.find(s => s._id === formData.seriesId)?.title
-                                                    : null;
+                                                    : seriesTitle || null;
+
                                     if (!seriesTitleForEp) return null;
                                     const sn = String(formData.seasonNumber || 1).padStart(2, "0");
                                     const en = String(formData.episodeNumber || 1).padStart(2, "0");
@@ -891,12 +961,11 @@ function UploadVideo({ mode = "new" }) {
                                             type="button"
                                             onClick={() => setFormData(prev => ({ ...prev, title: suggested }))}
                                             disabled={uploading}
-                                            className="mt-1.5 flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-slate-500 text-slate-300 hover:text-white rounded-lg text-xs transition group disabled:opacity-50"
+                                            className="mt-1.5 flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-slate-500 text-slate-300 hover:text-white rounded-lg text-xs transition group disabled:opacity-50 max-w-full"
                                             title={`Set title to "${suggested}"`}
                                         >
                                             <Sparkles className="w-3.5 h-3.5 text-amber-400 group-hover:text-amber-300 shrink-0" />
-                                            <span>Recommend name</span>
-                                            <span className="text-slate-500 truncate max-w-50">→ {suggested}</span>
+                                            <span className="text-slate-500 truncate max-w-50 flex-1">→ {suggested}</span>
                                         </button>
                                     );
                                 })()}
@@ -1082,38 +1151,46 @@ function UploadVideo({ mode = "new" }) {
                     {/* ── Metadata tags ─────────────────────────────────────── */}
                     <TagSection
                         title="Tags"
-                        inputValue={tagInput}       setInputValue={setTagInput}
-                        selectedItems={formData.tags}   suggestions={availableTags}
-                        placeholder="Add tag"
+                        inputValue={tagInput} 
+                        setInputValue={setTagInput}
+                        selectedItems={formData.tags} 
+                        suggestions={availableTags}
                         onSelect={val => toggleItem("tags", val)}
                         onAdd={() => addItem("tags", tagInput, setTagInput)}
+                        onClear={() => setFormData(prev => ({ ...prev, tags: [] }))}
                         disabled={uploading}
                     />
                     <TagSection
                         title="Studios"
-                        inputValue={studioInput}    setInputValue={setStudioInput}
-                        selectedItems={formData.studios} suggestions={availableStudios}
-                        placeholder="Add studio"
+                        inputValue={studioInput}
+                        setInputValue={setStudioInput}
+                        selectedItems={formData.studios} 
+                        suggestions={availableStudios}
                         onSelect={val => toggleItem("studios", val)}
                         onAdd={() => addItem("studios", studioInput, setStudioInput)}
+                        onClear={() => setFormData(prev => ({ ...prev, studios: [] }))}
                         disabled={uploading}
                     />
                     <TagSection
                         title="Actors"
-                        inputValue={actorInput}     setInputValue={setActorInput}
-                        selectedItems={formData.actors}  suggestions={availableActors}
-                        placeholder="Add actor"
+                        inputValue={actorInput} 
+                        setInputValue={setActorInput}
+                        selectedItems={formData.actors} 
+                        suggestions={availableActors}
                         onSelect={val => toggleItem("actors", val)}
                         onAdd={() => addItem("actors", actorInput, setActorInput)}
+                        onClear={() => setFormData(prev => ({ ...prev, actors: [] }))}
                         disabled={uploading}
                     />
                     <TagSection
                         title="Characters"
-                        inputValue={characterInput} setInputValue={setCharacterInput}
-                        selectedItems={formData.characters} suggestions={[]}
-                        placeholder="Add character"
+                        inputValue={characterInput} 
+                        setInputValue={setCharacterInput}
+                        selectedItems={formData.characters} 
+                        suggestions={[]}
                         onSelect={val => toggleItem("characters", val)}
                         onAdd={() => addItem("characters", characterInput, setCharacterInput)}
+                        onClear={() => setFormData(prev => ({ ...prev, characters: [] }))}
                         disabled={uploading}
                     />
 
