@@ -7,6 +7,7 @@ import {
     Film, Layers, Eye, Heart, HardDrive, Clock,
     TrendingUp, Star, Users, Tag, RefreshCw, Activity,
     Cpu, Archive, StopCircle, Play, AlertTriangle, CheckCircle2, XCircle,
+    RotateCcw, Database, ListChecks,
 } from "lucide-react";
 import { statsAPI, generalAPI, backupAPI, videoAPI } from "../api/api";
 import { formatViews, formatDuration, formatFileSize } from "../utils/format";
@@ -97,8 +98,6 @@ export default function Dashboard() {
     } = data;
 
     const hoursOfContent = Math.round((overview.totalDuration || 0) / 3600);
-
-    // Find peak hour label for sub-stat
     const peakHour = activeByHour.reduce((best, h) => h.sessions > (best?.sessions ?? 0) ? h : best, null);
 
     return (
@@ -149,7 +148,6 @@ export default function Dashboard() {
                     )}
                 </Panel>
 
-                {/* Active users by hour of day */}
                 <Panel>
                     <SectionTitle icon={Activity} title="Active Sessions by Hour" />
                     {peakHour && (
@@ -179,7 +177,7 @@ export default function Dashboard() {
                 </Panel>
             </div>
 
-            {/* ── Row 2: Top Favorite Videos (full-width list) ── */}
+            {/* ── Row 2: Top Favorite Videos + Series ── */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <Panel>
                     <SectionTitle icon={Heart} title="Top Favorite Videos" />
@@ -298,21 +296,16 @@ export default function Dashboard() {
                 </Panel>
             )}
 
-            {/* ── Admin Panels: Transcode Queue + Backup ── */}
-            {isAdmin && (
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                    <TranscodeQueuePanel />
-                    <BackupPanel />
-                </div>
-            )}
+            {/* ── Admin Panels ── */}
+            {isAdmin && <AdminSection />}
         </div>
     );
 }
 
-// ─── Transcode Queue Monitor ──────────────────────────────────────────────────
-function TranscodeQueuePanel() {
-    const [queue,   setQueue]   = useState(null);
-    const [loading, setLoading] = useState(true);
+// ─── AdminSection — owns the single queue SSE, distributes to children ────────
+function AdminSection() {
+    const [queue,        setQueue]        = useState(null);
+    const [queueLoading, setQueueLoading] = useState(true);
     const esRef = useRef(null);
 
     useEffect(() => {
@@ -320,12 +313,28 @@ function TranscodeQueuePanel() {
             if (esRef.current) esRef.current.close();
             const es = new EventSource(videoAPI.transcodeQueueStreamUrl(), { withCredentials: true });
             esRef.current = es;
-            es.onmessage = (e) => { try { setQueue(JSON.parse(e.data)); setLoading(false); } catch (_) {} };
-            es.onerror   = () => { es.close(); setTimeout(connect, 5000); };
+            es.onmessage = (e) => {
+                try { setQueue(JSON.parse(e.data)); setQueueLoading(false); } catch (_) {}
+            };
+            es.onerror = () => { es.close(); setTimeout(connect, 5000); };
         };
         connect();
         return () => esRef.current?.close();
     }, []);
+
+    return (
+        <div className="space-y-4">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <TranscodeQueuePanel queue={queue} loading={queueLoading} />
+                <BackupPanel />
+            </div>
+            <TranscodeVerifyPanel queue={queue} />
+        </div>
+    );
+}
+
+// ─── Transcode Queue Monitor (controlled — queue state owned by AdminSection) ─
+function TranscodeQueuePanel({ queue, loading }) {
 
     const isEmpty = !queue || (
         (queue.processingList?.length || 0) === 0 &&
@@ -335,17 +344,14 @@ function TranscodeQueuePanel() {
 
     return (
         <Panel>
-            {/* Header */}
             <div className="flex items-center justify-between mb-3">
                 <SectionTitle icon={Cpu} title="Transcode Queue" />
                 <div className="flex items-center gap-2">
-                    {/* Encoder chip */}
                     {queue?.encoder && (
                         <span className="text-[10px] px-2 py-0.5 bg-slate-800 text-slate-400 rounded-full border border-slate-700 font-mono hidden sm:inline">
                             {queue.encoder}
                         </span>
                     )}
-                    {/* Live indicator */}
                     <span className="flex items-center gap-1 text-[10px] text-green-400">
                         <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
                         LIVE
@@ -353,12 +359,11 @@ function TranscodeQueuePanel() {
                 </div>
             </div>
 
-            {/* Stat row */}
             {queue && (
                 <div className="grid grid-cols-3 gap-2 mb-4">
                     <QueueStatChip label="Active"  value={queue.active}   color="text-amber-400" />
                     <QueueStatChip label="Queued"  value={queue.queued}   color="text-blue-400"  />
-                    <QueueStatChip label={`Slots`} value={`${queue.active}/${queue.maxActive}`} color="text-slate-300" />
+                    <QueueStatChip label="Slots"   value={`${queue.active}/${queue.maxActive}`} color="text-slate-300" />
                 </div>
             )}
 
@@ -375,12 +380,9 @@ function TranscodeQueuePanel() {
 
             {!loading && !isEmpty && (
                 <div className="space-y-3 max-h-115 overflow-y-auto pr-0.5">
-                    {/* ── Processing ── */}
                     {queue.processingList?.length > 0 && (
                         <div>
-                            <p className="text-[10px] text-slate-500 uppercase tracking-wider font-medium mb-1.5 px-0.5">
-                                Processing
-                            </p>
+                            <p className="text-[10px] text-slate-500 uppercase tracking-wider font-medium mb-1.5 px-0.5">Processing</p>
                             <div className="space-y-2">
                                 {queue.processingList.map(item => (
                                     <TranscodeVideoCard key={item.videoId} item={item} />
@@ -389,12 +391,9 @@ function TranscodeQueuePanel() {
                         </div>
                     )}
 
-                    {/* ── Queued ── */}
                     {queue.queuedList?.length > 0 && (
                         <div>
-                            <p className="text-[10px] text-slate-500 uppercase tracking-wider font-medium mb-1.5 px-0.5">
-                                Waiting
-                            </p>
+                            <p className="text-[10px] text-slate-500 uppercase tracking-wider font-medium mb-1.5 px-0.5">Waiting</p>
                             <div className="space-y-2">
                                 {queue.queuedList.map(item => (
                                     <TranscodeVideoCard key={item.videoId} item={item} />
@@ -403,12 +402,9 @@ function TranscodeQueuePanel() {
                         </div>
                     )}
 
-                    {/* ── Recently done ── */}
                     {queue.recentlyDone?.length > 0 && (
                         <div>
-                            <p className="text-[10px] text-slate-500 uppercase tracking-wider font-medium mb-1.5 px-0.5">
-                                Recent
-                            </p>
+                            <p className="text-[10px] text-slate-500 uppercase tracking-wider font-medium mb-1.5 px-0.5">Recent</p>
                             <div className="space-y-2">
                                 {queue.recentlyDone.map(item => (
                                     <TranscodeVideoCard key={`${item.videoId}-${item.completedAt}`} item={{ ...item, status: 'done' }} />
@@ -431,7 +427,6 @@ function QueueStatChip({ label, value, color }) {
     );
 }
 
-// ─── Individual transcode job card ────────────────────────────────────────────
 function TranscodeVideoCard({ item }) {
     const isProcessing = item.status === 'processing';
     const isQueued     = item.status === 'queued';
@@ -442,7 +437,6 @@ function TranscodeVideoCard({ item }) {
                       : item.success ? 'border-green-500/40 bg-green-500/8'
                                      : 'border-red-500/40   bg-red-500/8';
 
-    // Overall percent across all planned resolutions
     const plannedCount = item.plannedResolutions?.length || 0;
     const doneCount    = item.completedResolutions?.length || 0;
     const resPct       = item.resolutionPercent || 0;
@@ -452,60 +446,46 @@ function TranscodeVideoCard({ item }) {
 
     return (
         <div className={`flex gap-2.5 p-2.5 rounded-xl border transition-all ${borderClass}`}>
-            {/* Thumbnail */}
             <div className="relative w-16 h-10 rounded-lg overflow-hidden shrink-0 bg-slate-800">
                 {item.thumbnailPath ? (
-                    <img
-                        src={generalAPI.thumbnailUrl(item.thumbnailPath)}
-                        alt={item.title}
-                        className="w-full h-full object-cover"
-                    />
+                    <img src={generalAPI.thumbnailUrl(item.thumbnailPath)} alt={item.title} className="w-full h-full object-cover" />
                 ) : (
                     <div className="w-full h-full flex items-center justify-center">
                         <Film className="w-4 h-4 text-slate-600" />
                     </div>
                 )}
-                {/* Status overlay dot */}
                 <div className={`absolute top-1 left-1 w-2 h-2 rounded-full border border-black/40 ${
-                    isProcessing         ? 'bg-amber-400 animate-pulse'
-                    : isQueued           ? 'bg-slate-500'
-                    : item.success       ? 'bg-green-500'
-                                         : 'bg-red-500'
+                    isProcessing   ? 'bg-amber-400 animate-pulse'
+                    : isQueued     ? 'bg-slate-500'
+                    : item.success ? 'bg-green-500'
+                                   : 'bg-red-500'
                 }`} />
             </div>
 
-            {/* Info column */}
             <div className="flex-1 min-w-0">
-                {/* Title + right badge */}
                 <div className="flex items-start justify-between gap-1 mb-1">
                     <p className="text-xs font-semibold text-white truncate leading-snug">
                         {item.title || `…${item.videoId?.slice(-8)}`}
                     </p>
                     <span className={`shrink-0 text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase leading-none ${
-                        isProcessing         ? 'bg-amber-500/20 text-amber-300'
-                        : isQueued           ? 'bg-slate-700 text-slate-400'
-                        : item.success       ? 'bg-green-500/20 text-green-300'
-                                             : 'bg-red-500/20 text-red-300'
+                        isProcessing   ? 'bg-amber-500/20 text-amber-300'
+                        : isQueued     ? 'bg-slate-700 text-slate-400'
+                        : item.success ? 'bg-green-500/20 text-green-300'
+                                       : 'bg-red-500/20 text-red-300'
                     }`}>
                         {isProcessing ? 'Encoding' : isQueued ? `#${item.position}` : item.success ? 'Done' : 'Failed'}
                     </span>
                 </div>
 
-                {/* Processing: resolution segments + overall bar */}
                 {isProcessing && (
                     <>
-                        {/* Current resolution + pct */}
                         <div className="flex items-center gap-1.5 mb-1.5">
                             <span className="text-[10px] text-amber-400 font-mono font-bold">
                                 {item.currentResolution || '…'}
                             </span>
-                            {resPct > 0 && (
-                                <span className="text-[10px] text-amber-300/70">{resPct}%</span>
-                            )}
+                            {resPct > 0 && <span className="text-[10px] text-amber-300/70">{resPct}%</span>}
                             <span className="text-[10px] text-slate-600 ml-auto">{overallPct}% overall</span>
                         </div>
-
-                        {/* Per-resolution segment bars */}
                         {item.plannedResolutions?.length > 0 && (
                             <div className="flex gap-1">
                                 {item.plannedResolutions.map(res => {
@@ -519,9 +499,7 @@ function TranscodeVideoCard({ item }) {
                                             <div className="h-1.5 rounded-full bg-slate-700 overflow-hidden">
                                                 <div
                                                     className={`h-full rounded-full transition-all duration-500 ${
-                                                        done   ? 'bg-green-500'
-                                                        : active ? 'bg-amber-400'
-                                                               : ''
+                                                        done ? 'bg-green-500' : active ? 'bg-amber-400' : ''
                                                     }`}
                                                     style={{ width: done ? '100%' : active ? `${resPct}%` : '0%' }}
                                                 />
@@ -534,12 +512,10 @@ function TranscodeVideoCard({ item }) {
                     </>
                 )}
 
-                {/* Queued: simple label */}
                 {isQueued && (
                     <p className="text-[10px] text-slate-500">Waiting for an open slot…</p>
                 )}
 
-                {/* Done: labels or error */}
                 {isDone && item.success && (
                     <div className="flex flex-wrap gap-1 mt-0.5">
                         {(item.labels || []).map(l => (
@@ -560,8 +536,8 @@ function TranscodeVideoCard({ item }) {
     );
 }
 
-// ─── Backup Panel ─────────────────────────────────────────────────────────────
-const STATUS_META = {
+// ─── Backup + Restore Panel ───────────────────────────────────────────────────
+const BACKUP_STATUS_META = {
     idle:             { icon: Archive,       color: 'text-slate-400',  label: 'Ready to backup' },
     running:          { icon: Archive,       color: 'text-blue-400',   label: 'Backup running…' },
     stopped:          { icon: StopCircle,    color: 'text-amber-400',  label: 'Stopped by user' },
@@ -570,123 +546,569 @@ const STATUS_META = {
     error:            { icon: XCircle,       color: 'text-red-400',    label: 'Backup error' },
 };
 
-function BackupPanel() {
-    const [bk, setBk]         = useState({ status: 'idle', total: 0, done: 0, failed: 0, skipped: 0, errors: [], currentFile: null, startedAt: null, finishedAt: null });
-    const [starting, setStarting] = useState(false);
-    const [stopping, setStopping] = useState(false);
-    const esRef  = useRef(null);
+const RESTORE_STATUS_META = {
+    idle:             { icon: Database,      color: 'text-slate-400',  label: 'Ready to restore' },
+    running:          { icon: RotateCcw,     color: 'text-blue-400',   label: 'Restoring…' },
+    done:             { icon: CheckCircle2,  color: 'text-green-400',  label: 'Restore complete' },
+    done_with_errors: { icon: AlertTriangle, color: 'text-amber-400',  label: 'Done with errors' },
+    error:            { icon: XCircle,       color: 'text-red-400',    label: 'Restore error' },
+};
 
-    // Connect SSE
+const BACKUP_MODES = [
+    { value: 'both', label: 'Both',     desc: 'Raw videos + HLS' },
+    { value: 'raw',  label: 'Raw only', desc: 'Video files only' },
+    { value: 'hls',  label: 'HLS only', desc: 'Transcode folders' },
+];
+
+function BackupPanel() {
+    const [activeTab,  setActiveTab]  = useState('backup');
+    const [mode,       setMode]       = useState('both');
+    const [bk,         setBk]         = useState({ status: 'idle', total: 0, done: 0, failed: 0, skipped: 0, errors: [], currentFile: null, startedAt: null, finishedAt: null, mode: 'both' });
+    const [restore,    setRestore]    = useState({ status: 'idle', total: 0, done: 0, failed: 0, skipped: 0, errors: [], currentFile: null, startedAt: null, finishedAt: null });
+    const [starting,   setStarting]   = useState(false);
+    const [stopping,   setStopping]   = useState(false);
+    const [restoring,  setRestoring]  = useState(false);
+    const bkEsRef  = useRef(null);
+    const rstEsRef = useRef(null);
+
+    // Backup SSE
     useEffect(() => {
         const connect = () => {
-            if (esRef.current) esRef.current.close();
+            if (bkEsRef.current) bkEsRef.current.close();
             const es = new EventSource(backupAPI.statusUrl(), { withCredentials: true });
-            esRef.current = es;
-            es.onmessage = (e) => { try { setBk(JSON.parse(e.data)); } catch { } };
+            bkEsRef.current = es;
+            es.onmessage = (e) => { try { setBk(JSON.parse(e.data)); } catch {} };
             es.onerror   = () => { es.close(); setTimeout(connect, 5000); };
         };
         connect();
-        return () => esRef.current?.close();
+        return () => bkEsRef.current?.close();
+    }, []);
+
+    // Restore SSE
+    useEffect(() => {
+        const connect = () => {
+            if (rstEsRef.current) rstEsRef.current.close();
+            const es = new EventSource(backupAPI.restoreStatusUrl(), { withCredentials: true });
+            rstEsRef.current = es;
+            es.onmessage = (e) => { try { setRestore(JSON.parse(e.data)); } catch {} };
+            es.onerror   = () => { es.close(); setTimeout(connect, 5000); };
+        };
+        connect();
+        return () => rstEsRef.current?.close();
     }, []);
 
     const handleStart = async () => {
         setStarting(true);
-        try { await backupAPI.start(); } catch (e) { alert(e?.response?.data?.error || 'Failed to start backup'); }
+        try { await backupAPI.start(mode); }
+        catch (e) { alert(e?.response?.data?.error || 'Failed to start backup'); }
         finally { setStarting(false); }
     };
 
     const handleStop = async () => {
         setStopping(true);
-        try { await backupAPI.stop(); } catch { }
+        try { await backupAPI.stop(); } catch {}
         finally { setStopping(false); }
     };
 
-    const pct     = bk.total > 0 ? Math.round((bk.done / bk.total) * 100) : 0;
-    const meta    = STATUS_META[bk.status] || STATUS_META.idle;
-    const StatusIcon = meta.icon;
-    const isRunning  = bk.status === 'running';
+    const handleRestore = async () => {
+        if (!window.confirm(
+            'This will restore missing series, videos, and media files from the backup directory.\n\n' +
+            'Existing records will NOT be overwritten — only missing ones will be added.\n\nProceed?'
+        )) return;
+        setRestoring(true);
+        try { await backupAPI.restore(); }
+        catch (e) { alert(e?.response?.data?.error || 'Failed to start restore'); }
+        finally { setRestoring(false); }
+    };
+
+    const bkPct  = bk.total      > 0 ? Math.round((bk.done      / bk.total)      * 100) : 0;
+    const rstPct = restore.total  > 0 ? Math.round((restore.done / restore.total)  * 100) : 0;
+    const bkMeta  = BACKUP_STATUS_META[bk.status]       || BACKUP_STATUS_META.idle;
+    const rstMeta = RESTORE_STATUS_META[restore.status]  || RESTORE_STATUS_META.idle;
+    const BkIcon  = bkMeta.icon;
+    const RstIcon = rstMeta.icon;
+    const isBackingUp  = bk.status === 'running';
+    const isRestoring  = restore.status === 'running';
 
     return (
         <Panel>
+            {/* Panel header + tab switcher */}
             <div className="flex items-center justify-between mb-4">
-                <SectionTitle icon={Archive} title="Backup" />
-                <StatusIcon className={`w-4 h-4 ${meta.color} ${isRunning ? 'animate-pulse' : ''}`} />
-            </div>
-
-            {/* Status row */}
-            <div className={`flex items-center gap-2 text-sm mb-4 ${meta.color}`}>
-                <span className="font-medium">{meta.label}</span>
-            </div>
-
-            {/* Progress bar (visible when running or after) */}
-            {bk.total > 0 && (
-                <div className="mb-4">
-                    <div className="flex justify-between text-xs text-slate-400 mb-1">
-                        <span>{bk.done} / {bk.total} files</span>
-                        <span>{pct}%</span>
-                    </div>
-                    <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
-                        <div
-                            className={`h-full rounded-full transition-all duration-300 ${
-                                bk.status === 'done' ? 'bg-green-500' :
-                                bk.status === 'error' || bk.status === 'stopped' ? 'bg-amber-500' : 'bg-blue-500'
+                <SectionTitle icon={Archive} title="Backup & Restore" />
+                <div className="flex bg-slate-800 rounded-lg p-0.5 gap-0.5">
+                    {['backup', 'restore'].map(tab => (
+                        <button
+                            key={tab}
+                            onClick={() => setActiveTab(tab)}
+                            className={`px-3 py-1 rounded-md text-xs font-medium transition capitalize ${
+                                activeTab === tab
+                                    ? 'bg-slate-700 text-white'
+                                    : 'text-slate-400 hover:text-slate-300'
                             }`}
-                            style={{ width: `${pct}%` }}
-                        />
-                    </div>
-                    <div className="flex gap-4 mt-1.5 text-xs text-slate-500">
-                        {bk.skipped > 0 && <span className="text-slate-400">↷ {bk.skipped} skipped</span>}
-                        {bk.failed  > 0 && <span className="text-red-400">✕ {bk.failed} failed</span>}
-                    </div>
-                </div>
-            )}
-
-            {/* Current file */}
-            {bk.currentFile && (
-                <p className="text-xs text-slate-500 truncate mb-3 font-mono bg-slate-800 px-2 py-1 rounded">
-                    {bk.currentFile}
-                </p>
-            )}
-
-            {/* Timestamps */}
-            {bk.startedAt && (
-                <div className="text-xs text-slate-500 mb-3 space-y-0.5">
-                    <p>Started: {new Date(bk.startedAt).toLocaleTimeString()}</p>
-                    {bk.finishedAt && <p>Finished: {new Date(bk.finishedAt).toLocaleTimeString()}</p>}
-                </div>
-            )}
-
-            {/* Errors */}
-            {bk.errors?.length > 0 && (
-                <div className="mb-3 max-h-24 overflow-y-auto space-y-1">
-                    {bk.errors.map((e, i) => (
-                        <p key={i} className="text-xs text-red-400 bg-red-500/10 px-2 py-1 rounded">{e}</p>
+                        >
+                            {tab}
+                        </button>
                     ))}
                 </div>
+            </div>
+
+            {/* ── Backup Tab ─────────────────────────────────────────────────── */}
+            {activeTab === 'backup' && (
+                <div className="space-y-4">
+                    {/* Mode selector */}
+                    <div>
+                        <p className="text-slate-500 text-xs mb-2">What to back up</p>
+                        <div className="grid grid-cols-3 gap-1.5">
+                            {BACKUP_MODES.map(m => (
+                                <button
+                                    key={m.value}
+                                    onClick={() => !isBackingUp && setMode(m.value)}
+                                    disabled={isBackingUp}
+                                    className={`flex flex-col items-center p-2 rounded-lg border text-center transition ${
+                                        mode === m.value
+                                            ? 'border-blue-500/60 bg-blue-500/10 text-blue-300'
+                                            : 'border-slate-700 bg-slate-800/50 text-slate-400 hover:border-slate-600 hover:text-slate-300'
+                                    } disabled:opacity-50 disabled:cursor-not-allowed`}
+                                >
+                                    <span className="text-xs font-semibold">{m.label}</span>
+                                    <span className="text-[10px] opacity-70 mt-0.5">{m.desc}</span>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Status */}
+                    <div className={`flex items-center gap-2 text-sm ${bkMeta.color}`}>
+                        <BkIcon className={`w-4 h-4 ${isBackingUp ? 'animate-pulse' : ''}`} />
+                        <span className="font-medium">{bkMeta.label}</span>
+                        {bk.mode && bk.status !== 'idle' && (
+                            <span className="text-slate-600 text-xs ml-auto">{bk.mode}</span>
+                        )}
+                    </div>
+
+                    {/* Progress bar */}
+                    {bk.total > 0 && (
+                        <div>
+                            <div className="flex justify-between text-xs text-slate-400 mb-1">
+                                <span>{bk.done} / {bk.total} files</span>
+                                <span>{bkPct}%</span>
+                            </div>
+                            <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
+                                <div
+                                    className={`h-full rounded-full transition-all duration-300 ${
+                                        bk.status === 'done'   ? 'bg-green-500' :
+                                        bk.status === 'error' || bk.status === 'stopped' ? 'bg-amber-500' : 'bg-blue-500'
+                                    }`}
+                                    style={{ width: `${bkPct}%` }}
+                                />
+                            </div>
+                            <div className="flex gap-4 mt-1.5 text-xs text-slate-500">
+                                {bk.skipped > 0 && <span className="text-slate-400">↷ {bk.skipped} skipped</span>}
+                                {bk.failed  > 0 && <span className="text-red-400">✕ {bk.failed} failed</span>}
+                            </div>
+                        </div>
+                    )}
+
+                    {bk.currentFile && (
+                        <p className="text-xs text-slate-500 truncate font-mono bg-slate-800 px-2 py-1 rounded">
+                            {bk.currentFile}
+                        </p>
+                    )}
+
+                    {bk.startedAt && (
+                        <div className="text-xs text-slate-500 space-y-0.5">
+                            <p>Started: {new Date(bk.startedAt).toLocaleTimeString()}</p>
+                            {bk.finishedAt && <p>Finished: {new Date(bk.finishedAt).toLocaleTimeString()}</p>}
+                        </div>
+                    )}
+
+                    {bk.errors?.length > 0 && (
+                        <div className="max-h-24 overflow-y-auto space-y-1">
+                            {bk.errors.map((e, i) => (
+                                <p key={i} className="text-xs text-red-400 bg-red-500/10 px-2 py-1 rounded">{e}</p>
+                            ))}
+                        </div>
+                    )}
+
+                    {/* Action buttons */}
+                    <div className="flex gap-2">
+                        {!isBackingUp ? (
+                            <button
+                                onClick={handleStart}
+                                disabled={starting}
+                                className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition"
+                            >
+                                <Play className="w-3.5 h-3.5" fill="currentColor" />
+                                {starting ? 'Starting…' : bk.status === 'idle' ? 'Start Backup' : 'Run Again'}
+                            </button>
+                        ) : (
+                            <button
+                                onClick={handleStop}
+                                disabled={stopping}
+                                className="flex items-center gap-1.5 px-3 py-2 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition"
+                            >
+                                <StopCircle className="w-3.5 h-3.5" />
+                                {stopping ? 'Stopping…' : 'Stop Backup'}
+                            </button>
+                        )}
+                    </div>
+                </div>
             )}
 
-            {/* Action buttons */}
-            <div className="flex gap-2 mt-2">
-                {!isRunning ? (
+            {/* ── Restore Tab ────────────────────────────────────────────────── */}
+            {activeTab === 'restore' && (
+                <div className="space-y-4">
+                    {/* Info banner */}
+                    <div className="bg-slate-800/60 border border-slate-700 rounded-lg p-3 text-xs text-slate-400 space-y-1">
+                        <p className="text-slate-300 font-medium">What restore does:</p>
+                        <p>• Reads JSON manifests from the backup's <span className="font-mono text-slate-300">_metadata/</span> folder</p>
+                        <p>• Creates missing series and video records in the database</p>
+                        <p>• Copies missing raw video files back to the upload directory</p>
+                        <p>• Re-links HLS transcode folders if they were backed up</p>
+                        <p className="text-slate-500 pt-1">Existing records and files are never overwritten.</p>
+                    </div>
+
+                    {/* Status */}
+                    <div className={`flex items-center gap-2 text-sm ${rstMeta.color}`}>
+                        <RstIcon className={`w-4 h-4 ${isRestoring ? 'animate-spin' : ''}`} />
+                        <span className="font-medium">{rstMeta.label}</span>
+                    </div>
+
+                    {/* Progress bar */}
+                    {restore.total > 0 && (
+                        <div>
+                            <div className="flex justify-between text-xs text-slate-400 mb-1">
+                                <span>{restore.done} / {restore.total} entries</span>
+                                <span>{rstPct}%</span>
+                            </div>
+                            <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
+                                <div
+                                    className={`h-full rounded-full transition-all duration-300 ${
+                                        restore.status === 'done'   ? 'bg-green-500' :
+                                        restore.status === 'error'  ? 'bg-red-500' : 'bg-blue-500'
+                                    }`}
+                                    style={{ width: `${rstPct}%` }}
+                                />
+                            </div>
+                            <div className="flex gap-4 mt-1.5 text-xs text-slate-500">
+                                {restore.skipped > 0 && <span className="text-slate-400">↷ {restore.skipped} existing (skipped)</span>}
+                                {restore.failed  > 0 && <span className="text-red-400">✕ {restore.failed} failed</span>}
+                            </div>
+                        </div>
+                    )}
+
+                    {restore.currentFile && (
+                        <p className="text-xs text-slate-500 truncate font-mono bg-slate-800 px-2 py-1 rounded">
+                            {restore.currentFile}
+                        </p>
+                    )}
+
+                    {restore.startedAt && (
+                        <div className="text-xs text-slate-500 space-y-0.5">
+                            <p>Started: {new Date(restore.startedAt).toLocaleTimeString()}</p>
+                            {restore.finishedAt && <p>Finished: {new Date(restore.finishedAt).toLocaleTimeString()}</p>}
+                        </div>
+                    )}
+
+                    {restore.errors?.length > 0 && (
+                        <div className="max-h-24 overflow-y-auto space-y-1">
+                            {restore.errors.map((e, i) => (
+                                <p key={i} className="text-xs text-red-400 bg-red-500/10 px-2 py-1 rounded">{e}</p>
+                            ))}
+                        </div>
+                    )}
+
                     <button
-                        onClick={handleStart}
-                        disabled={starting}
-                        className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition"
+                        onClick={handleRestore}
+                        disabled={restoring || isRestoring}
+                        className="flex items-center gap-1.5 px-3 py-2 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition"
                     >
-                        <Play className="w-3.5 h-3.5" fill="currentColor" />
-                        {starting ? 'Starting…' : bk.status === 'idle' ? 'Start Backup' : 'Run Again'}
+                        <RotateCcw className={`w-3.5 h-3.5 ${isRestoring ? 'animate-spin' : ''}`} />
+                        {restoring || isRestoring
+                            ? 'Restoring…'
+                            : restore.status === 'idle' ? 'Start Restore' : 'Restore Again'
+                        }
                     </button>
-                ) : (
+                </div>
+            )}
+        </Panel>
+    );
+}
+
+// ─── Transcode Verification Panel ─────────────────────────────────────────────
+const HLS_STATUS_COLOR = {
+    none:       'text-slate-400',
+    pending:    'text-blue-400',
+    processing: 'text-amber-400',
+    failed:     'text-red-400',
+    ready:      'text-green-400',
+};
+
+function TranscodeVerifyPanel({ queue }) {
+    const [loading,  setLoading]  = useState(false);
+    const [videos,   setVideos]   = useState(null);
+    const [selected, setSelected] = useState(new Set());
+    const [queuing,  setQueuing]  = useState(false);
+    const [result,   setResult]   = useState(null);
+
+    // Track previously-seen recentlyDone length to detect new completions
+    const prevDoneCountRef = useRef(0);
+
+    const scan = useCallback(async () => {
+        setLoading(true);
+        setResult(null);
+        try {
+            const data = await videoAPI.verifyTranscode();
+            setVideos(data);
+            setSelected(new Set());
+        } catch (e) {
+            console.error(e);
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    // Auto-rescan when a new job finishes (recentlyDone grows), but only if
+    // the panel has already been scanned at least once.
+    useEffect(() => {
+        const currentCount = queue?.recentlyDone?.length ?? 0;
+        if (currentCount > prevDoneCountRef.current && videos !== null) {
+            // Small delay so the DB has time to persist the final hlsStatus
+            const t = setTimeout(scan, 1200);
+            prevDoneCountRef.current = currentCount;
+            return () => clearTimeout(t);
+        }
+        prevDoneCountRef.current = currentCount;
+    }, [queue?.recentlyDone?.length, videos, scan]);
+
+    const toggleAll = () => {
+        if (selected.size === videos.length) setSelected(new Set());
+        else setSelected(new Set(videos.map(v => v._id.toString())));
+    };
+
+    const toggle = (id) => {
+        const next = new Set(selected);
+        next.has(id) ? next.delete(id) : next.add(id);
+        setSelected(next);
+    };
+
+    const queueSelected = async () => {
+        if (!selected.size) return;
+        setQueuing(true);
+        try {
+            const res = await videoAPI.batchTranscode([...selected]);
+            setResult(res);
+            setSelected(new Set());
+            // Small delay then rescan — queue SSE will also trigger one on completion
+            setTimeout(scan, 1000);
+        } catch (e) {
+            console.error(e);
+        } finally {
+            setQueuing(false);
+        }
+    };
+
+    const pendingCount   = videos?.filter(v => v.hlsStatus === 'none').length    ?? 0;
+    const failedCount    = videos?.filter(v => v.hlsStatus === 'failed').length   ?? 0;
+    const missingCount   = videos?.filter(v => v.hlsStatus === 'ready' && !v.hlsFileExists).length ?? 0;
+
+    // IDs currently processing or queued — used to show live status badges in the list
+    const activeIds  = new Set(queue?.activeIds  || []);
+    const queuedIds  = new Set(queue?.queuedIds  || []);
+
+    return (
+        <Panel>
+            {/* Header */}
+            <div className="flex items-center justify-between mb-4">
+                <SectionTitle icon={ListChecks} title="Transcode Verification" />
+                <div className="flex items-center gap-2">
+                    {/* Live auto-update indicator — only shown after first scan */}
+                    {videos !== null && (
+                        <span className="flex items-center gap-1 text-[10px] text-green-400" title="Auto-updates when queue finishes a job">
+                            <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+                            LIVE
+                        </span>
+                    )}
                     <button
-                        onClick={handleStop}
-                        disabled={stopping}
-                        className="flex items-center gap-1.5 px-3 py-2 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition"
+                        onClick={scan}
+                        disabled={loading}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs transition"
                     >
-                        <StopCircle className="w-3.5 h-3.5" />
-                        {stopping ? 'Stopping…' : 'Stop Backup'}
+                        <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+                        {videos === null ? 'Scan Library' : 'Re-scan'}
                     </button>
-                )}
+                </div>
             </div>
+
+            {/* Initial state */}
+            {videos === null && !loading && (
+                <div className="text-center py-10">
+                    <ListChecks className="w-8 h-8 text-slate-700 mx-auto mb-3" />
+                    <p className="text-slate-500 text-sm">
+                        Scan your library to find videos that aren't transcoded or whose HLS files are missing.
+                    </p>
+                </div>
+            )}
+
+            {/* Loading */}
+            {loading && (
+                <div className="flex items-center gap-2 justify-center py-10 text-slate-500 text-sm">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-400" />
+                    Scanning library…
+                </div>
+            )}
+
+            {/* Results */}
+            {videos !== null && !loading && (
+                <>
+                    {videos.length === 0 ? (
+                        <div className="flex items-center gap-2 text-green-400 text-sm py-6 justify-center">
+                            <CheckCircle2 className="w-5 h-5" />
+                            All videos are transcoded and HLS files are present
+                        </div>
+                    ) : (
+                        <>
+                            {/* Summary chips */}
+                            <div className="flex flex-wrap gap-2 mb-4">
+                                <span className="text-xs px-2.5 py-1 rounded-full bg-slate-800 border border-slate-700 text-amber-400">
+                                    {videos.length} need attention
+                                </span>
+                                {pendingCount > 0 && (
+                                    <span className="text-xs px-2.5 py-1 rounded-full bg-slate-800 border border-slate-700 text-slate-400">
+                                        {pendingCount} never transcoded
+                                    </span>
+                                )}
+                                {failedCount > 0 && (
+                                    <span className="text-xs px-2.5 py-1 rounded-full bg-slate-800 border border-red-900/40 text-red-400">
+                                        {failedCount} failed
+                                    </span>
+                                )}
+                                {missingCount > 0 && (
+                                    <span className="text-xs px-2.5 py-1 rounded-full bg-slate-800 border border-amber-900/40 text-amber-400">
+                                        {missingCount} files missing
+                                    </span>
+                                )}
+                            </div>
+
+                            {/* Toolbar */}
+                            <div className="flex items-center justify-between mb-3">
+                                <button
+                                    onClick={toggleAll}
+                                    className="text-xs text-slate-400 hover:text-white transition"
+                                >
+                                    {selected.size === videos.length ? 'Deselect all' : `Select all (${videos.length})`}
+                                </button>
+                                <button
+                                    onClick={queueSelected}
+                                    disabled={!selected.size || queuing}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white rounded-lg text-xs font-medium transition"
+                                >
+                                    <Play className="w-3 h-3" fill="currentColor" />
+                                    {queuing
+                                        ? 'Queuing…'
+                                        : selected.size
+                                            ? `Queue ${selected.size} video${selected.size !== 1 ? 's' : ''}`
+                                            : 'Queue selected'
+                                    }
+                                </button>
+                            </div>
+
+                            {/* Queue result banner */}
+                            {result && (
+                                <div className="mb-3 p-2.5 rounded-lg bg-slate-800 border border-slate-700 text-xs flex gap-4 items-center">
+                                    {result.queued > 0  && <span className="text-amber-400 font-medium">▶ {result.queued} queued</span>}
+                                    {result.skipped > 0 && <span className="text-slate-400">↷ {result.skipped} skipped (already ready)</span>}
+                                    {result.errors > 0  && <span className="text-red-400">✕ {result.errors} errors</span>}
+                                </div>
+                            )}
+
+                            {/* Video list */}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5 max-h-80 overflow-y-auto">
+                                {videos.map(v => {
+                                    const id          = v._id.toString();
+                                    const isChecked   = selected.has(id);
+                                    const isActive    = activeIds.has(id);
+                                    const isQueuedNow = queuedIds.has(id);
+                                    return (
+                                        <div
+                                            key={id}
+                                            onClick={() => !isActive && !isQueuedNow && toggle(id)}
+                                            className={`flex items-center gap-2.5 p-2 rounded-lg transition border ${
+                                                isActive    ? 'border-amber-500/60 bg-amber-500/10 cursor-default' :
+                                                isQueuedNow ? 'border-blue-500/40  bg-blue-500/8  cursor-default' :
+                                                isChecked   ? 'border-amber-500/50 bg-amber-500/10 cursor-pointer' :
+                                                              'border-slate-800 bg-slate-800/40 hover:bg-slate-800 cursor-pointer'
+                                            }`}
+                                        >
+                                            {/* Checkbox — hidden while live in queue */}
+                                            {!isActive && !isQueuedNow && (
+                                                <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition ${
+                                                    isChecked ? 'bg-amber-500 border-amber-500' : 'border-slate-600'
+                                                }`}>
+                                                    {isChecked && <span className="text-white text-[9px] font-bold leading-none">✓</span>}
+                                                </div>
+                                            )}
+                                            {/* Live status dot */}
+                                            {(isActive || isQueuedNow) && (
+                                                <div className={`w-4 h-4 flex items-center justify-center shrink-0`}>
+                                                    <span className={`w-2 h-2 rounded-full ${isActive ? 'bg-amber-400 animate-pulse' : 'bg-blue-400'}`} />
+                                                </div>
+                                            )}
+
+                                            {/* Thumbnail */}
+                                            <div className="w-12 h-8 rounded bg-slate-700 shrink-0 overflow-hidden">
+                                                {v.thumbnailPath ? (
+                                                    <img
+                                                        src={generalAPI.thumbnailUrl(v.thumbnailPath)}
+                                                        alt=""
+                                                        className="w-full h-full object-cover"
+                                                    />
+                                                ) : (
+                                                    <div className="w-full h-full flex items-center justify-center">
+                                                        <Film className="w-3 h-3 text-slate-600" />
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            {/* Info */}
+                                            <div className="flex-1 min-w-0">
+                                                <p className="text-white text-xs truncate font-medium leading-tight">
+                                                    {v.title}
+                                                </p>
+                                                <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                                                    {/* Live queue status overrides stored hlsStatus */}
+                                                    {isActive ? (
+                                                        <span className="text-[10px] font-mono text-amber-400">encoding…</span>
+                                                    ) : isQueuedNow ? (
+                                                        <span className="text-[10px] font-mono text-blue-400">queued</span>
+                                                    ) : (
+                                                        <span className={`text-[10px] font-mono ${HLS_STATUS_COLOR[v.hlsStatus] || 'text-slate-500'}`}>
+                                                            {v.hlsStatus || 'none'}
+                                                        </span>
+                                                    )}
+                                                    {v.hlsStatus === 'ready' && !v.hlsFileExists && (
+                                                        <span className="text-[10px] text-red-400">⚠ files missing</span>
+                                                    )}
+                                                    {v.duration > 0 && (
+                                                        <span className="text-[10px] text-slate-600">
+                                                            {formatDuration(v.duration)}
+                                                        </span>
+                                                    )}
+                                                    {v.fileSize > 0 && (
+                                                        <span className="text-[10px] text-slate-600">
+                                                            {formatFileSize(v.fileSize)}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </>
+                    )}
+                </>
+            )}
         </Panel>
     );
 }

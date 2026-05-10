@@ -146,6 +146,16 @@ export const videoAPI = {
     // Admin: SSE stream URL for real-time queue updates
     transcodeQueueStreamUrl: () => `${API_URL}/api/videos/transcode-queue/stream`,
 
+    // ── Transcode Verification ────────────────────────────────────────────────
+    // Admin: returns all videos that are not transcoded or whose HLS files are missing
+    verifyTranscode: async () =>
+        (await axios.get(`${API_URL}/api/videos/transcode-verify`)).data,
+
+    // Admin: queue multiple videos for transcoding in one call
+    // ids: string[]  →  { queued, skipped, errors }
+    batchTranscode: async (ids) =>
+        (await axios.post(`${API_URL}/api/videos/transcode-batch`, { ids })).data,
+
     // ── Metadata ──────────────────────────────────────────────────────────────
     getTags:       async () => (await axios.get(`${API_URL}/api/videos/metadata/tags`)).data,
     getStudios:    async () => (await axios.get(`${API_URL}/api/videos/metadata/studios`)).data,
@@ -197,9 +207,28 @@ export const statsAPI = {
 
 // ─── Backup API (admin only) ──────────────────────────────────────────────────
 export const backupAPI = {
-    getState:    async ()  => (await axios.get(`${API_URL}/api/backup/state`)).data,
-    start:       async ()  => (await axios.post(`${API_URL}/api/backup/start`)).data,
-    stop:        async ()  => (await axios.post(`${API_URL}/api/backup/stop`)).data,
-    /** Returns an EventSource URL for SSE progress stream */
-    statusUrl:   ()        => `${API_URL}/api/backup/status`,
+    // ── Backup ────────────────────────────────────────────────────────────────
+    getState: async () =>
+        (await axios.get(`${API_URL}/api/backup/state`)).data,
+
+    /** mode: 'both' | 'raw' | 'hls'  (default: 'both') */
+    start: async (mode = 'both') =>
+        (await axios.post(`${API_URL}/api/backup/start`, { mode })).data,
+
+    stop: async () =>
+        (await axios.post(`${API_URL}/api/backup/stop`)).data,
+
+    /** SSE URL for real-time backup progress */
+    statusUrl: () => `${API_URL}/api/backup/status`,
+
+    // ── Restore ───────────────────────────────────────────────────────────────
+    getRestoreState: async () =>
+        (await axios.get(`${API_URL}/api/backup/restore-state`)).data,
+
+    /** Restore from the server's configured backup directory */
+    restore: async () =>
+        (await axios.post(`${API_URL}/api/backup/restore`)).data,
+
+    /** SSE URL for real-time restore progress */
+    restoreStatusUrl: () => `${API_URL}/api/backup/restore-status`,
 };

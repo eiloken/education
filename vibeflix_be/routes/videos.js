@@ -606,8 +606,23 @@ function buildFilterQuery(params, userFavoriteIds = null, seriesIds = []) {
     if (durationFilter === 'medium') query.duration = { $gte: 900, $lt: 3600 };
     if (durationFilter === 'long')   query.duration = { $gte: 3600 };
 
-    if (hlsFilter === 'transcoded')     query.hlsStatus = 'ready';
-    if (hlsFilter === 'not_transcoded') query.hlsStatus = { $in: ['none', 'failed'] };
+    if (hlsFilter === 'transcoded') {
+        query.hlsStatus = 'ready';
+    }
+    if (hlsFilter === 'not_transcoded') {
+        // Match videos that are explicitly 'none' or 'failed', AND those that
+        // pre-date the hlsStatus field (null / field absent entirely).
+        query.$and = [
+            ...(query.$and || []),
+            {
+                $or: [
+                    { hlsStatus: { $in: ['none', 'failed'] } },
+                    { hlsStatus: null },
+                    { hlsStatus: { $exists: false } },
+                ],
+            },
+        ];
+}
 
     if (favorite === 'true') {
         query._id = { $in: userFavoriteIds ?? [] };
@@ -622,6 +637,94 @@ function annotateWithFavorites(videos, favoriteIdSet) {
         isFavorite: favoriteIdSet.has(v._id.toString()),
     }));
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADD THESE TWO ROUTES TO videos.js
+// Placement: right after the /transcode-queue/stream route (around line 694),
+// BEFORE the /metadata/* routes and any /:id routes.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─── GET /api/videos/transcode-verify  [admin only] ──────────────────────────
+// Returns every video that either has no HLS transcode or whose HLS files are
+// missing on disk, so the admin can decide which ones to re-queue.
+router.get('/transcode-verify', requireAdmin, async (req, res) => {
+    try {
+        const videos = await Video.find({})
+            .select('title thumbnailPath hlsStatus hlsPath duration fileSize seriesId episodeNumber seasonNumber videoPath')
+            .lean();
+
+        const results = [];
+        for (const v of videos) {
+            const isReady    = v.hlsStatus === 'ready';
+            const masterPath = path.join(uploadDir, 'hls', v._id.toString(), 'master.m3u8');
+            const fileExists = isReady ? fs.existsSync(masterPath) : false;
+
+            // Include if: not yet transcoded OR marked ready but files are gone
+            if (!isReady || !fileExists) {
+                results.push({
+                    _id:          v._id,
+                    title:        v.title,
+                    thumbnailPath: v.thumbnailPath,
+                    hlsStatus:    v.hlsStatus,
+                    hlsFileExists: fileExists,
+                    duration:     v.duration,
+                    fileSize:     v.fileSize,
+                    seriesId:     v.seriesId,
+                    episodeNumber: v.episodeNumber,
+                    seasonNumber:  v.seasonNumber,
+                });
+            }
+        }
+
+        res.json(results);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ─── POST /api/videos/transcode-batch  [admin only] ──────────────────────────
+// Queue multiple videos for HLS transcoding in one call.
+// Body: { ids: string[] }
+router.post('/transcode-batch', requireAdmin, async (req, res) => {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({ error: 'ids array is required' });
+    }
+
+    let queued = 0, skipped = 0, errors = 0;
+
+    for (const id of ids) {
+        try {
+            const video = await Video.findById(id);
+            if (!video) { errors++; continue; }
+
+            const videoPath = path.join(uploadDir, video.videoPath);
+            if (!fs.existsSync(videoPath)) { errors++; continue; }
+
+            if (video.hlsStatus === 'ready') {
+                // Files must be missing or we wouldn't be here — reset and re-transcode
+                const masterPath = path.join(uploadDir, 'hls', id, 'master.m3u8');
+                if (fs.existsSync(masterPath)) { skipped++; continue; }
+
+                deleteHlsFolder(id);
+                await Video.findByIdAndUpdate(id, {
+                    hlsPath: null, resolutions: [], hlsStatus: 'none',
+                });
+            } else if (['failed', 'none'].includes(video.hlsStatus)) {
+                deleteHlsFolder(id);
+                await Video.findByIdAndUpdate(id, { hlsPath: null, resolutions: [] });
+            }
+            // 'pending' / 'processing' → startHLSJob will detect duplicate and skip
+
+            startHLSJob(video._id, videoPath).catch(() => {});
+            queued++;
+        } catch {
+            errors++;
+        }
+    }
+
+    res.json({ success: true, queued, skipped, errors });
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Routes

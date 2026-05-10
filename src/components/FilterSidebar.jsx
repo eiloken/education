@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { videoAPI } from "../api/api";
 import { Filter, Search, X, ToggleLeft, ToggleRight } from "lucide-react";
+import { useDebounce } from "../hooks/debounce";
+import getSuggestions from "../helpers/search";
 
 export const DEFAULT_FILTERS = {
     search: '',
@@ -249,9 +251,9 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters }) {
                         <div className="flex gap-2 flex-wrap">
                             {[
                                 { value: '',       label: 'All',              sub: '' },
-                                { value: 'short',  label: '⚡ Short',          sub: '< 5 min' },
-                                { value: 'medium', label: '🎬 Medium',         sub: '5 ~ 30 min' },
-                                { value: 'long',   label: '🎥 Long',           sub: '> 30 min' },
+                                { value: 'short',  label: 'Short',          sub: '< 5 min' },
+                                { value: 'medium', label: 'Medium',         sub: '5 ~ 30 min' },
+                                { value: 'long',   label: 'Long',           sub: '> 30 min' },
                             ].map(opt => (
                                 <button
                                     key={opt.value}
@@ -272,9 +274,9 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters }) {
                     <Section title="Streaming">
                         <div className="flex gap-2 flex-wrap">
                             {[
-                                { value: '',               label: '🎬 All',           sub: 'no filter' },
-                                { value: 'transcoded',     label: '✅ Transcoded',     sub: 'HLS ready' },
-                                { value: 'not_transcoded', label: '⚡ Not transcoded', sub: 'raw stream' },
+                                { value: '',               label: 'All',           sub: 'no filter' },
+                                { value: 'transcoded',     label: 'Transcoded',     sub: 'HLS ready' },
+                                { value: 'not_transcoded', label: 'Not transcoded', sub: 'raw stream' },
                             ].map(opt => (
                                 <button
                                     key={opt.value}
@@ -347,20 +349,21 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters }) {
 // ─── TagSection ───────────────────────────────────────────────────────────────
 // allItems: { value: string, count: number }[]
 function TagSection({ title, field, allItems, localFilters, onCycle }) {
-    const [search, setSearch]     = useState('');
+    const [search, setSearch] = useState('');
     const [filtered, setFiltered] = useState(allItems);
+
+    const searchTerm = useDebounce(search, 300);
 
     useEffect(() => {
         if (!search) { setFiltered(allItems); return; }
-        const t = setTimeout(() => {
-            const q = search.toLowerCase();
-            setFiltered(allItems.filter(i => i.value.toLowerCase().includes(q)));
-        }, 300);
-        return () => clearTimeout(t);
-    }, [search, allItems]);
+        if (!searchTerm) return;
 
-    const included    = localFilters[field]              || [];
-    const excluded    = localFilters[`${field}Exclude`] || [];
+        const matched = getSuggestions(searchTerm, allItems.map(i => i.value), { limit: 10 }).map(s => s.value);
+        setFiltered(matched.map(v => ({ value: v, count: allItems.find(i => i.value === v)?.count || 0 })));
+    }, [searchTerm, search, allItems]);
+
+    const included = localFilters[field] || [];
+    const excluded = localFilters[`${field}Exclude`] || [];
     const activeCount = included.length + excluded.length;
 
     // Total video count across all visible items in this section
@@ -377,9 +380,20 @@ function TagSection({ title, field, allItems, localFilters, onCycle }) {
             </span>
         }>
             {allItems.length > 6 && (
-                <input type="text" value={search} onChange={e => setSearch(e.target.value)}
-                    placeholder={`Filter ${title.toLowerCase()}…`}
-                    className="w-full px-3 py-1.5 bg-slate-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 text-xs mb-2" />
+                <div className="relative mb-2">
+                    <input
+                        type="text"
+                        value={search}
+                        onChange={e => setSearch(e.target.value)}
+                        placeholder={`Filter ${title.toLowerCase()}…`}
+                        className="w-full pl-3 pr-8 py-1.5 bg-slate-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 text-xs" 
+                    />
+                    {search && (
+                        <button onClick={() => setSearch('')} className="absolute top-1/2 right-2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition">
+                            <X className="w-3 h-3" />
+                        </button>
+                    )}
+                </div>
             )}
             <div className="flex flex-wrap gap-1.5 max-h-96 overflow-y-auto p-2 bg-slate-800 rounded-lg">
                 {filtered.length === 0 ? (

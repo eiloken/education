@@ -187,10 +187,11 @@ function TagSection({ title, inputValue, setInputValue, selectedItems, suggestio
     const searchTerm = useDebounce(inputValue, 300);
 
     useEffect(() => {
-        if (!searchTerm) { setMatchedItems(suggestions); return; }
+        if (!inputValue) { setMatchedItems(suggestions); return; }
+        if (!searchTerm) return; 
         const matched = getSuggestions(searchTerm, suggestions, { limit: 5 });
         setMatchedItems(matched.map(s => s.value));
-    }, [searchTerm, suggestions]);
+    }, [inputValue, searchTerm, suggestions]);
 
     useEffect(() => {
         const allItems = [...new Set([...selectedItems, ...matchedItems])];
