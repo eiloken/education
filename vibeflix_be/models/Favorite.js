@@ -3,7 +3,7 @@ import mongoose from "mongoose";
 const favoriteSchema = new mongoose.Schema({
     userId:   { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     itemId:   { type: mongoose.Schema.Types.ObjectId, required: true },
-    itemType: { type: String, enum: ['video', 'series'], required: true },
+    itemType: { type: String, enum: ['video', 'series', 'album', 'albumImage'], required: true },  // ← 'album' added
 }, { timestamps: true });
 
 // Prevent duplicate favorites

@@ -227,6 +227,19 @@ function deleteHlsFolder(videoId) {
     }
 }
 
+// Recursively sum all file sizes in a directory
+function getDirSize(dirPath) {
+    let size = 0;
+    try {
+        for (const entry of fs.readdirSync(dirPath, { withFileTypes: true })) {
+            const full = path.join(dirPath, entry.name);
+            if (entry.isDirectory()) size += getDirSize(full);
+            else { try { size += fs.statSync(full).size; } catch (_) {} }
+        }
+    } catch (_) {}
+    return size;
+}
+
 // ─── HLS Transcode ────────────────────────────────────────────────────────────
 /**
  * FIX #3: Auto-detects the best resolution the source can actually support
@@ -433,10 +446,23 @@ async function runJob({ videoId, videoPath, resolve, reject }) {
             path:    `hls/${videoId}/${label}/index.m3u8`,
         }));
 
+        // Calculate total on-disk size = raw file + HLS segments
+        let rawSize = 0;
+        let hlsSize = 0;
+        try {
+            const video = await Video.findById(videoId, 'videoPath fileSize').lean();
+            if (video?.videoPath) {
+                try { rawSize = fs.statSync(path.join(uploadDir, video.videoPath)).size; } catch (_) {}
+            }
+            const hlsFolder = path.join(uploadDir, 'hls', videoId.toString());
+            if (fs.existsSync(hlsFolder)) hlsSize = getDirSize(hlsFolder);
+        } catch (_) {}
+
         await Video.findByIdAndUpdate(videoId, {
             hlsStatus:   'ready',
             hlsPath:     `hls/${videoId}`,
             resolutions,
+            fileSize:    rawSize + hlsSize,
         });
 
         console.log(`✅ HLS ready [${videoId}]: ${labels.join(', ')}`);
@@ -639,14 +665,75 @@ function annotateWithFavorites(videos, favoriteIdSet) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ADD THESE TWO ROUTES TO videos.js
-// Placement: right after the /transcode-queue/stream route (around line 694),
-// BEFORE the /metadata/* routes and any /:id routes.
+// Routes
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ─── GET /api/videos/transcode-verify  [admin only] ──────────────────────────
-// Returns every video that either has no HLS transcode or whose HLS files are
-// missing on disk, so the admin can decide which ones to re-queue.
+// ─── GET /api/videos ─────────────────────────────────────────────────────────
+router.get('/', async (req, res) => {
+    try {
+        const { page = 1, limit = 20, sortBy = 'updatedAt', order = 'desc' } = req.query;
+        const sortOrder = order === 'asc' ? 1 : -1;
+
+        let userFavIds = null;
+        let favSet     = new Set();
+        if (req.user) {
+            const favs = await Favorite.find({ userId: req.user._id, itemType: 'video' }, 'itemId');
+            userFavIds = favs.map(f => f.itemId);
+            favSet     = new Set(userFavIds.map(id => id.toString()));
+        }
+
+        let matchedSeriesIds = [];
+        if (req.query.search?.trim()) {
+            const terms = req.query.search.trim().split(/\s+/).filter(Boolean);
+            const seriesOrClauses = terms.map(term => ({
+                title: new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'),
+            }));
+            const matchedSeries = await Series.find(
+                seriesOrClauses.length === 1 ? seriesOrClauses[0] : { $and: seriesOrClauses },
+                '_id'
+            );
+            matchedSeriesIds = matchedSeries.map(s => s._id);
+        }
+
+        const query = buildFilterQuery(req.query, userFavIds, matchedSeriesIds);
+        const [videos, count] = await Promise.all([
+            Video.find(query)
+                .sort({ [sortBy]: sortOrder })
+                .limit(parseInt(limit))
+                .skip((parseInt(page) - 1) * parseInt(limit)),
+            Video.countDocuments(query),
+        ]);
+
+        res.json({
+            videos:      annotateWithFavorites(videos, favSet),
+            totalPages:  Math.ceil(count / parseInt(limit)),
+            currentPage: parseInt(page),
+            total:       count,
+        });
+    } catch (error) {
+        console.error('Error listing videos:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ─── GET /api/videos/transcode-queue  [admin only] ───────────────────────────
+router.get('/transcode-queue', requireAdmin, (req, res) => {
+    res.json(getQueueStatus());
+});
+
+// ─── GET /api/videos/transcode-queue/stream  [admin SSE] ─────────────────────
+router.get('/transcode-queue/stream', requireAdmin, (req, res) => {
+    res.setHeader('Content-Type',  'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection',    'keep-alive');
+    res.flushHeaders();
+
+    res.write(`data: ${JSON.stringify(getQueueStatus())}\n\n`);
+
+    queueSseSet.add(res);
+    req.on('close', () => queueSseSet.delete(res));
+});
+
 router.get('/transcode-verify', requireAdmin, async (req, res) => {
     try {
         const videos = await Video.find({})
@@ -726,76 +813,6 @@ router.post('/transcode-batch', requireAdmin, async (req, res) => {
     res.json({ success: true, queued, skipped, errors });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Routes
-// ─────────────────────────────────────────────────────────────────────────────
-
-// ─── GET /api/videos ─────────────────────────────────────────────────────────
-router.get('/', async (req, res) => {
-    try {
-        const { page = 1, limit = 20, sortBy = 'updatedAt', order = 'desc' } = req.query;
-        const sortOrder = order === 'asc' ? 1 : -1;
-
-        let userFavIds = null;
-        let favSet     = new Set();
-        if (req.user) {
-            const favs = await Favorite.find({ userId: req.user._id, itemType: 'video' }, 'itemId');
-            userFavIds = favs.map(f => f.itemId);
-            favSet     = new Set(userFavIds.map(id => id.toString()));
-        }
-
-        let matchedSeriesIds = [];
-        if (req.query.search?.trim()) {
-            const terms = req.query.search.trim().split(/\s+/).filter(Boolean);
-            const seriesOrClauses = terms.map(term => ({
-                title: new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'),
-            }));
-            const matchedSeries = await Series.find(
-                seriesOrClauses.length === 1 ? seriesOrClauses[0] : { $and: seriesOrClauses },
-                '_id'
-            );
-            matchedSeriesIds = matchedSeries.map(s => s._id);
-        }
-
-        const query = buildFilterQuery(req.query, userFavIds, matchedSeriesIds);
-        const [videos, count] = await Promise.all([
-            Video.find(query)
-                .sort({ [sortBy]: sortOrder })
-                .limit(parseInt(limit))
-                .skip((parseInt(page) - 1) * parseInt(limit)),
-            Video.countDocuments(query),
-        ]);
-
-        res.json({
-            videos:      annotateWithFavorites(videos, favSet),
-            totalPages:  Math.ceil(count / parseInt(limit)),
-            currentPage: parseInt(page),
-            total:       count,
-        });
-    } catch (error) {
-        console.error('Error listing videos:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// ─── GET /api/videos/transcode-queue  [admin only] ───────────────────────────
-router.get('/transcode-queue', requireAdmin, (req, res) => {
-    res.json(getQueueStatus());
-});
-
-// ─── GET /api/videos/transcode-queue/stream  [admin SSE] ─────────────────────
-router.get('/transcode-queue/stream', requireAdmin, (req, res) => {
-    res.setHeader('Content-Type',  'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection',    'keep-alive');
-    res.flushHeaders();
-
-    res.write(`data: ${JSON.stringify(getQueueStatus())}\n\n`);
-
-    queueSseSet.add(res);
-    req.on('close', () => queueSseSet.delete(res));
-});
-
 // ─── GET /api/videos/metadata/* ──────────────────────────────────────────────
 async function metaAgg(field) {
     return Video.aggregate([
@@ -810,6 +827,45 @@ router.get('/metadata/tags',       async (req, res) => { try { res.json((await m
 router.get('/metadata/studios',    async (req, res) => { try { res.json((await metaAgg('studios')).map(r => ({ value: r._id, count: r.count })));    } catch (e) { res.status(500).json({ error: e.message }); } });
 router.get('/metadata/actors',     async (req, res) => { try { res.json((await metaAgg('actors')).map(r => ({ value: r._id, count: r.count })));     } catch (e) { res.status(500).json({ error: e.message }); } });
 router.get('/metadata/characters', async (req, res) => { try { res.json((await metaAgg('characters')).map(r => ({ value: r._id, count: r.count }))); } catch (e) { res.status(500).json({ error: e.message }); } });
+
+
+// ─── POST /api/videos/recalculate-storage  [admin only] ──────────────────────
+router.post('/recalculate-storage', requireAdmin, async (req, res) => {
+    try {
+        const videos = await Video.find({}, '_id videoPath fileSize').lean();
+        let updated = 0;
+        let totalRaw = 0;
+        let totalHls = 0;
+
+        const ops = [];
+        for (const video of videos) {
+            let rawSize = 0;
+            let hlsSize = 0;
+
+            if (video.videoPath) {
+                try { rawSize = fs.statSync(path.join(uploadDir, video.videoPath)).size; } catch (_) {}
+            }
+
+            const hlsFolder = path.join(uploadDir, 'hls', video._id.toString());
+            if (fs.existsSync(hlsFolder)) hlsSize = getDirSize(hlsFolder);
+
+            const total = rawSize + hlsSize;
+            totalRaw += rawSize;
+            totalHls += hlsSize;
+
+            if (total !== (video.fileSize || 0)) {
+                ops.push({ updateOne: { filter: { _id: video._id }, update: { $set: { fileSize: total } } } });
+                updated++;
+            }
+        }
+
+        if (ops.length) await Video.bulkWrite(ops);
+
+        res.json({ success: true, total: videos.length, updated, totalRaw, totalHls, totalStorage: totalRaw + totalHls });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
 
 // ─── PATCH /api/videos/:id/view ──────────────────────────────────────────────
 router.patch('/:id/view', async (req, res) => {

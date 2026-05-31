@@ -6,9 +6,9 @@ const API_URL = import.meta.env.VITE_API_URL || "";
 axios.defaults.withCredentials = true;
 
 export const generalAPI = {
-    health:       async ()       => (await axios.get(`${API_URL}/api/health`)).data,
-    movieUrl:     (fileName)     => `${API_URL}/api/movies/${fileName}`,
-    thumbnailUrl: (fileName)     => `${API_URL}/api/thumbnails/${fileName}`,
+    health: async () => (await axios.get(`${API_URL}/api/health`)).data,
+    movieUrl: (fileName) => `${API_URL}/api/movies/${fileName}`,
+    thumbnailUrl: (fileName) => `${API_URL}/api/thumbnails/${fileName}`,
 };
 
 // ─── Auth API ─────────────────────────────────────────────────────────────────
@@ -37,37 +37,23 @@ export const authAPI = {
 
 // ─── Favorites API ────────────────────────────────────────────────────────────
 export const favoritesAPI = {
-    getMyFavorites: async (params = {}) =>
-        (await axios.get(`${API_URL}/api/favorites`, { params })).data,
-
-    toggle: async (itemId, itemType) =>
-        (await axios.post(`${API_URL}/api/favorites/toggle`, { itemId, itemType })).data,
-
-    getIds: async () =>
-        (await axios.get(`${API_URL}/api/favorites/ids`)).data,
+    getMyFavorites: async (params = {}) => (await axios.get(`${API_URL}/api/favorites`, { params })).data,
+    toggle: async (itemId, itemType) => (await axios.post(`${API_URL}/api/favorites/toggle`, { itemId, itemType })).data,
+    getIds: async () => (await axios.get(`${API_URL}/api/favorites/ids`)).data,
 };
 
 // ─── History API ──────────────────────────────────────────────────────────────
 export const historyAPI = {
     /** Upsert progress — throttle calls on the client side */
-    saveProgress: async (videoId, progress, duration) =>
-        (await axios.post(`${API_URL}/api/history/progress`, { videoId, progress, duration })).data,
-
+    saveProgress: async (videoId, progress, duration) => (await axios.post(`${API_URL}/api/history/progress`, { videoId, progress, duration })).data,
     /** Clear progress for a video (called when it finishes) */
-    clearProgress: async (videoId) =>
-        (await axios.delete(`${API_URL}/api/history/progress/${videoId}`)).data,
-
+    clearProgress: async (videoId) => (await axios.delete(`${API_URL}/api/history/progress/${videoId}`)).data,
     /** Remove a video from history entirely */
-    removeEntry: async (videoId) =>
-        (await axios.delete(`${API_URL}/api/history/${videoId}`)).data,
-
+    removeEntry: async (videoId) => (await axios.delete(`${API_URL}/api/history/${videoId}`)).data,
     /** Paginated history list */
-    getHistory: async (params = {}) =>
-        (await axios.get(`${API_URL}/api/history`, { params })).data,
-
+    getHistory: async (params = {}) => (await axios.get(`${API_URL}/api/history`, { params })).data,
     /** Get saved progress for a single video */
-    getProgress: async (videoId) =>
-        (await axios.get(`${API_URL}/api/history/progress/${videoId}`)).data,
+    getProgress: async (videoId) => (await axios.get(`${API_URL}/api/history/progress/${videoId}`)).data,
 };
 
 // ─── Activity API ─────────────────────────────────────────────────────────────
@@ -79,125 +65,67 @@ export const activityAPI = {
 
 // ─── Video API ────────────────────────────────────────────────────────────────
 export const videoAPI = {
-    getVideos: async (params = {}) =>
-        (await axios.get(`${API_URL}/api/videos`, { params })).data,
-
-    getVideo: async (id) =>
-        (await axios.get(`${API_URL}/api/videos/${id}`)).data,
-
-    uploadVideo: async (formData, onUploadProgress) =>
-        (await axios.post(`${API_URL}/api/videos/upload`, formData, {
-            headers: { 'Content-Type': 'multipart/form-data' },
-            onUploadProgress,
-        })).data,
-
-    updateVideo: async (id, video) =>
-        (await axios.put(`${API_URL}/api/videos/${id}`, video)).data,
-
-    toggleFavorite: async (id) =>
-        (await axios.patch(`${API_URL}/api/videos/${id}/favorite`)).data,
-
-    deleteVideo: async (id) =>
-        (await axios.delete(`${API_URL}/api/videos/${id}`)).data,
-
-    replaceVideo: async (id, formData, onUploadProgress) =>
-        (await axios.put(`${API_URL}/api/videos/${id}/replace-video`, formData, {
-            headers: { 'Content-Type': 'multipart/form-data' },
-            onUploadProgress,
-        })).data,
-
-    generateThumbnails: async (id, count = 5) =>
-        (await axios.post(`${API_URL}/api/videos/${id}/thumbnails/generate`, { count })).data,
-
-    applyThumbnail: async (id, filename, syncSeries = false) =>
-        (await axios.post(`${API_URL}/api/videos/${id}/thumbnails/apply`, { filename, syncSeries })).data,
-
-    getStreamUrl: (id, quality) =>
-        `${API_URL}/api/videos/${id}/stream${quality ? `?quality=${quality}` : ''}`,
-
-    trackView: async (id) =>
-        (await axios.patch(`${API_URL}/api/videos/${id}/view`)).data,
-
+    getVideos: async (params = {}) => (await axios.get(`${API_URL}/api/videos`, { params })).data,
+    getVideo: async (id) => (await axios.get(`${API_URL}/api/videos/${id}`)).data,
+    uploadVideo: async (formData, onUploadProgress) => (await axios.post(`${API_URL}/api/videos/upload`, formData, { headers: { 'Content-Type': 'multipart/form-data' }, onUploadProgress, })).data,
+    updateVideo: async (id, video) => (await axios.put(`${API_URL}/api/videos/${id}`, video)).data,
+    toggleFavorite: async (id) => (await axios.patch(`${API_URL}/api/videos/${id}/favorite`)).data,
+    deleteVideo: async (id) => (await axios.delete(`${API_URL}/api/videos/${id}`)).data,
+    replaceVideo: async (id, formData, onUploadProgress) => (await axios.put(`${API_URL}/api/videos/${id}/replace-video`, formData, { headers: { 'Content-Type': 'multipart/form-data' }, onUploadProgress, })).data,
+    generateThumbnails: async (id, count = 5) => (await axios.post(`${API_URL}/api/videos/${id}/thumbnails/generate`, { count })).data,
+    applyThumbnail: async (id, filename, syncSeries = false) => (await axios.post(`${API_URL}/api/videos/${id}/thumbnails/apply`, { filename, syncSeries })).data,
+    getStreamUrl: (id, quality) => `${API_URL}/api/videos/${id}/stream${quality ? `?quality=${quality}` : ''}`,
+    trackView: async (id) => (await axios.patch(`${API_URL}/api/videos/${id}/view`)).data,
     // Returns a plain URL the browser can navigate to for direct download
-    getDownloadUrl: (id) =>
-        `${API_URL}/api/videos/${id}/download`,
-
+    getDownloadUrl: (id) => `${API_URL}/api/videos/${id}/download`,
     // ── HLS ───────────────────────────────────────────────────────────────────
     // Returns a plain URL string (not a promise) — passed directly as <video src>
-    getHlsUrl: (id) =>
-        `${API_URL}/api/videos/${id}/hls/master.m3u8`,
-
+    getHlsUrl: (id) => `${API_URL}/api/videos/${id}/hls/master.m3u8`,
     // Poll transcoding progress — { hlsStatus, resolutions }
-    getHlsStatus: async (id) =>
-        (await axios.get(`${API_URL}/api/videos/${id}/hls-status`)).data,
-
+    getHlsStatus: async (id) => (await axios.get(`${API_URL}/api/videos/${id}/hls-status`)).data,
     // Admin: kick off background transcoding for an existing video
-    triggerTranscode: async (id) =>
-        (await axios.post(`${API_URL}/api/videos/${id}/transcode`)).data,
-
+    triggerTranscode: async (id) => (await axios.post(`${API_URL}/api/videos/${id}/transcode`)).data,
     // Admin: remove HLS segments and revert to raw stream
-    removeTranscode: async (id) =>
-        (await axios.delete(`${API_URL}/api/videos/${id}/transcode`)).data,
-
+    removeTranscode: async (id) => (await axios.delete(`${API_URL}/api/videos/${id}/transcode`)).data,
     // Admin: get current queue status { active, maxActive, queued, activeIds, queuedIds }
-    getTranscodeQueue: async () =>
-        (await axios.get(`${API_URL}/api/videos/transcode-queue`)).data,
-
+    getTranscodeQueue: async () => (await axios.get(`${API_URL}/api/videos/transcode-queue`)).data,
     // Admin: SSE stream URL for real-time queue updates
     transcodeQueueStreamUrl: () => `${API_URL}/api/videos/transcode-queue/stream`,
-
     // ── Transcode Verification ────────────────────────────────────────────────
     // Admin: returns all videos that are not transcoded or whose HLS files are missing
-    verifyTranscode: async () =>
-        (await axios.get(`${API_URL}/api/videos/transcode-verify`)).data,
-
+    verifyTranscode: async () => (await axios.get(`${API_URL}/api/videos/transcode-verify`)).data,
     // Admin: queue multiple videos for transcoding in one call
     // ids: string[]  →  { queued, skipped, errors }
-    batchTranscode: async (ids) =>
-        (await axios.post(`${API_URL}/api/videos/transcode-batch`, { ids })).data,
-
+    batchTranscode: async (ids) => (await axios.post(`${API_URL}/api/videos/transcode-batch`, { ids })).data,
     // ── Metadata ──────────────────────────────────────────────────────────────
-    getTags:       async () => (await axios.get(`${API_URL}/api/videos/metadata/tags`)).data,
-    getStudios:    async () => (await axios.get(`${API_URL}/api/videos/metadata/studios`)).data,
-    getActors:     async () => (await axios.get(`${API_URL}/api/videos/metadata/actors`)).data,
+    getTags: async () => (await axios.get(`${API_URL}/api/videos/metadata/tags`)).data,
+    getStudios: async () => (await axios.get(`${API_URL}/api/videos/metadata/studios`)).data,
+    getActors: async () => (await axios.get(`${API_URL}/api/videos/metadata/actors`)).data,
     getCharacters: async () => (await axios.get(`${API_URL}/api/videos/metadata/characters`)).data,
+    recalculateStorage: async () => (await axios.post(`${API_URL}/api/videos/recalculate-storage`)).data,
 };
 
 // ─── Series API ───────────────────────────────────────────────────────────────
 export const seriesAPI = {
-    getSeries: async (params = {}) =>
-        (await axios.get(`${API_URL}/api/series`, { params })).data,
-
-    getSeriesWithEpisodes: async (id) =>
-        (await axios.get(`${API_URL}/api/series/${id}`)).data,
-
-    createSeries: async (formData) =>
-        (await axios.post(`${API_URL}/api/series`, formData, {
-            headers: { 'Content-Type': 'multipart/form-data' },
-        })).data,
-
-    updateSeries: async (id, formData) =>
-        (await axios.put(`${API_URL}/api/series/${id}`, formData, {
-            headers: { 'Content-Type': 'multipart/form-data' },
-        })).data,
-
-    toggleFavorite: async (id) =>
-        (await axios.patch(`${API_URL}/api/series/${id}/favorite`)).data,
-
-    deleteSeries: async (id) =>
-        (await axios.delete(`${API_URL}/api/series/${id}`)).data,
-
+    getSeries: async (params = {}) => (await axios.get(`${API_URL}/api/series`, { params })).data,
+    getSeriesWithEpisodes: async (id) => (await axios.get(`${API_URL}/api/series/${id}`)).data,
+    createSeries: async (formData) => (await axios.post(`${API_URL}/api/series`, formData, { headers: { 'Content-Type': 'multipart/form-data' }, })).data,
+    updateSeries: async (id, formData) => (await axios.put(`${API_URL}/api/series/${id}`, formData, { headers: { 'Content-Type': 'multipart/form-data' }, })).data,
+    toggleFavorite: async (id) => (await axios.patch(`${API_URL}/api/series/${id}/favorite`)).data,
+    deleteSeries: async (id) => (await axios.delete(`${API_URL}/api/series/${id}`)).data,
     getEpisodes: async (seriesId, season = null) => {
         const params = season ? { season } : {};
         return (await axios.get(`${API_URL}/api/series/${seriesId}/episodes`, { params })).data;
     },
-
     thumbnailUrl: (fileName) => generalAPI.thumbnailUrl(fileName),
-
-    getTags:       async (id) => (await axios.get(`${API_URL}/api/series/metadata/${id}/tags`)).data,
-    getStudios:    async (id) => (await axios.get(`${API_URL}/api/series/metadata/${id}/studios`)).data,
-    getActors:     async (id) => (await axios.get(`${API_URL}/api/series/metadata/${id}/actors`)).data,
-    getCharacters: async (id) => (await axios.get(`${API_URL}/api/series/metadata/${id}/characters`)).data,
+    /*getTags: async (id) => (await axios.get(`${API_URL}/api/series/metadata/${id}/tags`)).data,
+    getStudios: async (id) => (await axios.get(`${API_URL}/api/series/metadata/${id}/studios`)).data,
+    getActors: async (id) => (await axios.get(`${API_URL}/api/series/metadata/${id}/actors`)).data,
+    getCharacters: async (id) => (await axios.get(`${API_URL}/api/series/metadata/${id}/characters`)).data,*/
+    getTags: async () => (await axios.get(`${API_URL}/api/series/metadata/tags`)).data,
+    getStudios: async () => (await axios.get(`${API_URL}/api/series/metadata/studios`)).data,
+    getActors: async () => (await axios.get(`${API_URL}/api/series/metadata/actors`)).data,
+    getCharacters: async () => (await axios.get(`${API_URL}/api/series/metadata/characters`)).data,
 };
 
 // ─── Stats API ────────────────────────────────────────────────────────────────
@@ -208,27 +136,49 @@ export const statsAPI = {
 // ─── Backup API (admin only) ──────────────────────────────────────────────────
 export const backupAPI = {
     // ── Backup ────────────────────────────────────────────────────────────────
-    getState: async () =>
-        (await axios.get(`${API_URL}/api/backup/state`)).data,
-
+    getState: async () => (await axios.get(`${API_URL}/api/backup/state`)).data,
     /** mode: 'both' | 'raw' | 'hls'  (default: 'both') */
-    start: async (mode = 'both') =>
-        (await axios.post(`${API_URL}/api/backup/start`, { mode })).data,
-
-    stop: async () =>
-        (await axios.post(`${API_URL}/api/backup/stop`)).data,
-
+    start: async (mode = 'both') => (await axios.post(`${API_URL}/api/backup/start`, { mode })).data,
+    stop: async () => (await axios.post(`${API_URL}/api/backup/stop`)).data,
     /** SSE URL for real-time backup progress */
     statusUrl: () => `${API_URL}/api/backup/status`,
-
     // ── Restore ───────────────────────────────────────────────────────────────
-    getRestoreState: async () =>
-        (await axios.get(`${API_URL}/api/backup/restore-state`)).data,
-
+    getRestoreState: async () => (await axios.get(`${API_URL}/api/backup/restore-state`)).data,
     /** Restore from the server's configured backup directory */
-    restore: async () =>
-        (await axios.post(`${API_URL}/api/backup/restore`)).data,
-
+    restore: async () => (await axios.post(`${API_URL}/api/backup/restore`)).data,
     /** SSE URL for real-time restore progress */
     restoreStatusUrl: () => `${API_URL}/api/backup/restore-status`,
+};
+
+// ─── Album API ────────────────────────────────────────────────────────────────
+export const albumAPI = {
+    // Albums CRUD
+    getAlbums: async (params = {}) => (await axios.get(`${API_URL}/api/albums`, { params })).data,
+    getAlbum: async (id) => (await axios.get(`${API_URL}/api/albums/${id}`)).data,
+    createAlbum: async (formData) => (await axios.post(`${API_URL}/api/albums`, formData, { headers: { 'Content-Type': 'multipart/form-data' }, })).data,
+    updateAlbum: async (id, formData) => (await axios.put(`${API_URL}/api/albums/${id}`, formData, { headers: { 'Content-Type': 'multipart/form-data' }, })).data,
+    deleteAlbum: async (id) => (await axios.delete(`${API_URL}/api/albums/${id}`)).data,
+    // Images
+    uploadImages: async (albumId, formData) => (await axios.post(`${API_URL}/api/albums/${albumId}/images`, formData, { headers: { 'Content-Type': 'multipart/form-data' }, })).data,
+    deleteImages: async (albumId, imageIds) => (await axios.delete(`${API_URL}/api/albums/${albumId}/images`, { data: { imageIds }, })).data,
+    recordView: async (imageId) => (await axios.patch(`${API_URL}/api/albums/images/${imageId}/view`)).data,
+    // Favorites
+    toggleFavorite: async (id) => (await axios.patch(`${API_URL}/api/albums/${id}/favorite`)).data,
+    // Download (returns URL — open in browser to trigger zip download)
+    downloadAlbum: async (albumId, imageIds = null) => {
+        const ids = imageIds?.length ? `?ids=${imageIds.join(',')}` : '';
+        const res = await axios.get(`${API_URL}/api/albums/${albumId}/download${ids}`, {
+            responseType: 'blob',
+        });
+        const url  = URL.createObjectURL(res.data);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'album.zip';
+        a.click();
+        URL.revokeObjectURL(url);
+    },
+    // Static file URL helpers
+    imageUrl: (fileName) => `${API_URL}/api/images/${fileName}`,
+    getMetadata: async (type) => (await axios.get(`${API_URL}/api/albums/metadata/${type}`)).data,
+    toggleImageFavorite: async (imageId) => (await axios.patch(`${API_URL}/api/albums/images/${imageId}/favorite`)).data,
 };

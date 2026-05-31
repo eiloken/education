@@ -153,6 +153,17 @@ router.get("/", async (req, res) => {
     }
 });
 
+router.get('/metadata/tags', async (req, res) => { try { res.json((await Series.distinct('tags')).filter(Boolean).sort()); } catch (e) { res.status(500).json({ error: e.message }); } });
+router.get('/metadata/studios', async (req, res) => { try { res.json((await Series.distinct('studios')).filter(Boolean).sort()); } catch (e) { res.status(500).json({ error: e.message }); } });
+router.get('/metadata/actors', async (req, res) => { try { res.json((await Series.distinct('actors')).filter(Boolean).sort()); } catch (e) { res.status(500).json({ error: e.message }); } });
+router.get('/metadata/characters', async (req, res) => { try { res.json((await Series.distinct('characters')).filter(Boolean).sort()); } catch (e) { res.status(500).json({ error: e.message }); } });
+
+// ─── Metadata endpoints ───────────────────────────────────────────────────────
+router.get('/metadata/:id/tags', async (req, res) => { try { res.json((await Series.findById(req.params.id).distinct('tags')).filter(Boolean).sort()); } catch (e) { res.status(500).json({ error: e.message }); } });
+router.get('/metadata/:id/studios', async (req, res) => { try { res.json((await Series.findById(req.params.id).distinct('studios')).filter(Boolean).sort()); } catch (e) { res.status(500).json({ error: e.message }); } });
+router.get('/metadata/:id/actors', async (req, res) => { try { res.json((await Series.findById(req.params.id).distinct('actors')).filter(Boolean).sort()); } catch (e) { res.status(500).json({ error: e.message }); } });
+router.get('/metadata/:id/characters', async (req, res) => { try { res.json((await Series.findById(req.params.id).distinct('characters')).filter(Boolean).sort()); } catch (e) { res.status(500).json({ error: e.message }); } });
+
 // ─── GET /api/series/:id  — with episodes ────────────────────────────────────
 router.get("/:id", async (req, res) => {
     try {
@@ -305,11 +316,5 @@ router.get("/:id/episodes", async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
-
-// ─── Metadata endpoints ───────────────────────────────────────────────────────
-router.get('/metadata/:id/tags', async (req, res) => { try { res.json((await Series.findById(req.params.id).distinct('tags')).filter(Boolean).sort()); } catch (e) { res.status(500).json({ error: e.message }); } });
-router.get('/metadata/:id/studios', async (req, res) => { try { res.json((await Series.findById(req.params.id).distinct('studios')).filter(Boolean).sort()); } catch (e) { res.status(500).json({ error: e.message }); } });
-router.get('/metadata/:id/actors', async (req, res) => { try { res.json((await Series.findById(req.params.id).distinct('actors')).filter(Boolean).sort()); } catch (e) { res.status(500).json({ error: e.message }); } });
-router.get('/metadata/:id/characters', async (req, res) => { try { res.json((await Series.findById(req.params.id).distinct('characters')).filter(Boolean).sort()); } catch (e) { res.status(500).json({ error: e.message }); } });
 
 export default router;

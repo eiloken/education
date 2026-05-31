@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { videoAPI } from "../api/api";
-import { Filter, Search, X, ToggleLeft, ToggleRight } from "lucide-react";
+import { videoAPI, albumAPI, seriesAPI } from "../api/api";
+import { Filter, Search, X, ToggleLeft, ToggleRight, Film, Layers, Images } from "lucide-react";
 import { useDebounce } from "../hooks/debounce";
 import getSuggestions from "../helpers/search";
 
@@ -17,6 +17,7 @@ export const DEFAULT_FILTERS = {
     order: 'desc',
     durationFilter: '',
     hlsFilter: '',
+    contentType: 'all',   // 'all' | 'videos' | 'series' | 'albums'
 };
 
 // ─── URL serialisation helpers ────────────────────────────────────────────────
@@ -39,6 +40,7 @@ export const filtersToParams = (f) => {
         ord:  f.order     && f.order     !== DEFAULT_FILTERS.order   ? f.order   : null,
         dur:  f.durationFilter || null,
         hls:  f.hlsFilter      || null,
+        ct:   f.contentType && f.contentType !== 'all' ? f.contentType : null,
     };
 };
 
@@ -61,6 +63,7 @@ export const paramsToFilters = (params) => {
         order:             params.get('ord') || DEFAULT_FILTERS.order,
         durationFilter:    params.get('dur') || '',
         hlsFilter:         params.get('hls') || '',
+        contentType:       params.get('ct')  || 'all',
     };
 };
 
@@ -80,13 +83,23 @@ function cycleItem(filters, field, item) {
     }
 }
 
+// Merge two {value,count}[] arrays, summing counts for shared values
+function mergeMetadata(a, b) {
+    const map = new Map();
+    for (const item of [...a, ...b]) {
+        const v = typeof item === 'string' ? item : item.value;
+        const c = typeof item === 'object' ? (item.count || 0) : 0;
+        map.set(v, (map.get(v) || 0) + c);
+    }
+    return Array.from(map.entries())
+        .map(([value, count]) => ({ value, count }))
+        .sort((a, b) => a.value.localeCompare(b.value));
+}
+
 // ─── FilterSidebar ────────────────────────────────────────────────────────────
-// allItems from the API are now { value: string, count: number }[]
-// The internal filter arrays still store plain strings — no breaking change.
 function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters }) {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError]         = useState(null);
-    // Each is { value: string, count: number }[]
     const [tags, setTags]           = useState([]);
     const [studios, setStudios]     = useState([]);
     const [actors, setActors]       = useState([]);
@@ -101,17 +114,30 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters }) {
     const fetchFilterOptions = useCallback(async () => {
         setIsLoading(true); setError(null);
         try {
-            const [tagsData, studiosData, actorsData, charsData] = await Promise.all([
+            // Fetch from all three sources in parallel
+            const [
+                videoTags, videoStudios, videoActors, videoChars,
+                albumTags, albumStudios, albumActors, albumChars,
+                seriesTags, seriesStudios, seriesActors, seriesChars,
+            ] = await Promise.allSettled([
                 videoAPI.getTags(),
                 videoAPI.getStudios(),
                 videoAPI.getActors(),
                 videoAPI.getCharacters(),
-            ]);
-            // API now returns { value, count }[] — store as-is
-            setTags(tagsData || []);
-            setStudios(studiosData || []);
-            setActors(actorsData || []);
-            setChars(charsData || []);
+                albumAPI.getMetadata('tags'),
+                albumAPI.getMetadata('studios'),
+                albumAPI.getMetadata('actors'),
+                albumAPI.getMetadata('characters'),
+                seriesAPI.getTags?.() ?? Promise.resolve([]),
+                seriesAPI.getStudios?.() ?? Promise.resolve([]),
+                seriesAPI.getActors?.() ?? Promise.resolve([]),
+                seriesAPI.getCharacters?.() ?? Promise.resolve([]),
+            ]).then(r => r.map(p => p.status === 'fulfilled' ? (p.value || []) : []));
+
+            setTags(mergeMetadata(mergeMetadata(videoTags, albumTags), seriesTags));
+            setStudios(mergeMetadata(mergeMetadata(videoStudios, albumStudios), seriesStudios));
+            setActors(mergeMetadata(mergeMetadata(videoActors, albumActors), seriesActors));
+            setChars(mergeMetadata(mergeMetadata(videoChars, albumChars), seriesChars));
         } catch (err) {
             console.error('Error fetching filter options:', err);
             setError(err);
@@ -126,13 +152,19 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters }) {
     const applyFilters = () => { onFilterChange(localFilters); onClose(); };
     const resetFilters = () => { setLocalFilters(DEFAULT_FILTERS); onFilterChange(DEFAULT_FILTERS); onClose(); };
 
+    const ct = localFilters.contentType || 'all';
+    const isVideoOnly  = ct === 'videos';
+    const isAlbumOnly  = ct === 'albums';
+    const isSeriesOnly = ct === 'series';
+
     const activeCount =
         (localFilters.tags?.length || 0)       + (localFilters.tagsExclude?.length || 0) +
         (localFilters.studios?.length || 0)    + (localFilters.studiosExclude?.length || 0) +
         (localFilters.actors?.length || 0)     + (localFilters.actorsExclude?.length || 0) +
         (localFilters.characters?.length || 0) + (localFilters.charactersExclude?.length || 0) +
         (localFilters.year ? 1 : 0) + (localFilters.favorite ? 1 : 0) +
-        (localFilters.durationFilter ? 1 : 0) + (localFilters.hlsFilter ? 1 : 0);
+        (localFilters.durationFilter ? 1 : 0) + (localFilters.hlsFilter ? 1 : 0) +
+        (ct !== 'all' ? 1 : 0);
 
     const years = Array.from({ length: 50 }, (_, i) => new Date().getFullYear() - i);
 
@@ -166,16 +198,43 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters }) {
                         </div>
                     )}
 
+                    {/* ── Content Type ─────────────────────────────────── */}
+                    <Section title="Content Type">
+                        <div className="grid grid-cols-4 gap-1.5">
+                            {[
+                                { value: 'all',    label: 'All',    Icon: Filter },
+                                { value: 'videos', label: 'Videos', Icon: Film },
+                                { value: 'series', label: 'Series', Icon: Layers },
+                                { value: 'albums', label: 'Albums', Icon: Images },
+                            ].map(({ value, label, Icon }) => (
+                                <button
+                                    key={value}
+                                    onClick={() => handleChange('contentType', value)}
+                                    className={`flex flex-col items-center gap-1 px-2 py-2.5 rounded-lg text-xs font-medium border-2 transition ${
+                                        ct === value
+                                            ? 'border-red-500 bg-red-500/20 text-red-300'
+                                            : 'border-slate-600 bg-slate-700 text-slate-300 hover:bg-slate-600'
+                                    }`}
+                                >
+                                    <Icon className="w-4 h-4" />
+                                    {label}
+                                </button>
+                            ))}
+                        </div>
+                    </Section>
+
+                    {/* ── Search ───────────────────────────────────────── */}
                     <Section title="Search">
                         <div className="relative">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                             <input type="text" value={localFilters.search}
                                 onChange={e => handleChange('search', e.target.value)}
-                                placeholder="Search by title…"
+                                placeholder="Search title, actor, tag…"
                                 className="w-full pl-10 pr-4 py-2.5 bg-slate-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 text-sm" />
                         </div>
                     </Section>
 
+                    {/* ── Filter match mode ─────────────────────────────── */}
                     <Section title="Filter match mode">
                         <button
                             onClick={() => handleChange('filterMode', localFilters.filterMode === 'or' ? 'and' : 'or')}
@@ -210,6 +269,7 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters }) {
                         </span>
                     </div>
 
+                    {/* ── Favorites ─────────────────────────────────────── */}
                     <Section>
                         <label className="flex items-center gap-2 cursor-pointer select-none">
                             <input type="checkbox" checked={localFilters.favorite}
@@ -219,6 +279,7 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters }) {
                         </label>
                     </Section>
 
+                    {/* ── Year ─────────────────────────────────────────── */}
                     <Section title="Year">
                         <select value={localFilters.year} onChange={e => handleChange('year', e.target.value)}
                             className="w-full px-3 py-2.5 bg-slate-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 text-sm">
@@ -227,6 +288,7 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters }) {
                         </select>
                     </Section>
 
+                    {/* ── Sort By ───────────────────────────────────────── */}
                     <Section title="Sort By">
                         <div className="flex gap-2">
                             <select value={localFilters.sortBy} onChange={e => handleChange('sortBy', e.target.value)}
@@ -236,8 +298,8 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters }) {
                                 <option value="title">Title (A–Z)</option>
                                 <option value="year">Year</option>
                                 <option value="views">Views</option>
-                                <option value="duration">Duration</option>
-                                <option value="episodeNumber">Episode #</option>
+                                {!isAlbumOnly && <option value="duration">Duration</option>}
+                                {isVideoOnly  && <option value="episodeNumber">Episode #</option>}
                             </select>
                             <select value={localFilters.order} onChange={e => handleChange('order', e.target.value)}
                                 className="px-3 py-2.5 bg-slate-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 text-sm">
@@ -247,62 +309,71 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters }) {
                         </div>
                     </Section>
 
-                    <Section title="Duration">
-                        <div className="flex gap-2 flex-wrap">
-                            {[
-                                { value: '',       label: 'All',              sub: '' },
-                                { value: 'short',  label: 'Short',          sub: '< 5 min' },
-                                { value: 'medium', label: 'Medium',         sub: '5 ~ 30 min' },
-                                { value: 'long',   label: 'Long',           sub: '> 30 min' },
-                            ].map(opt => (
-                                <button
-                                    key={opt.value}
-                                    onClick={() => handleChange('durationFilter', opt.value)}
-                                    className={`flex-1 min-w-17.5 px-2.5 py-2 rounded-lg text-xs font-medium border-2 transition text-center ${
-                                        localFilters.durationFilter === opt.value
-                                            ? 'border-red-500 bg-red-500/20 text-red-300'
-                                            : 'border-slate-600 bg-slate-700 text-slate-300 hover:bg-slate-600'
-                                    }`}
-                                >
-                                    <div>{opt.label}</div>
-                                    {opt.sub && <div className="text-slate-400 text-[10px]">{opt.sub}</div>}
-                                </button>
-                            ))}
-                        </div>
-                    </Section>
+                    {/* ── Duration — videos/series only ─────────────────── */}
+                    {!isAlbumOnly && (
+                        <Section title="Duration">
+                            <div className="flex gap-2 flex-wrap">
+                                {[
+                                    { value: '',       label: 'All',    sub: '' },
+                                    { value: 'short',  label: 'Short',  sub: '< 5 min' },
+                                    { value: 'medium', label: 'Medium', sub: '5–30 min' },
+                                    { value: 'long',   label: 'Long',   sub: '> 30 min' },
+                                ].map(opt => (
+                                    <button
+                                        key={opt.value}
+                                        onClick={() => handleChange('durationFilter', opt.value)}
+                                        className={`flex-1 min-w-[4.5rem] px-2.5 py-2 rounded-lg text-xs font-medium border-2 transition text-center ${
+                                            localFilters.durationFilter === opt.value
+                                                ? 'border-red-500 bg-red-500/20 text-red-300'
+                                                : 'border-slate-600 bg-slate-700 text-slate-300 hover:bg-slate-600'
+                                        }`}
+                                    >
+                                        <div>{opt.label}</div>
+                                        {opt.sub && <div className="text-slate-400 text-[10px]">{opt.sub}</div>}
+                                    </button>
+                                ))}
+                            </div>
+                        </Section>
+                    )}
 
-                    <Section title="Streaming">
-                        <div className="flex gap-2 flex-wrap">
-                            {[
-                                { value: '',               label: 'All',           sub: 'no filter' },
-                                { value: 'transcoded',     label: 'Transcoded',     sub: 'HLS ready' },
-                                { value: 'not_transcoded', label: 'Not transcoded', sub: 'raw stream' },
-                            ].map(opt => (
-                                <button
-                                    key={opt.value}
-                                    onClick={() => handleChange('hlsFilter', opt.value)}
-                                    className={`flex-1 min-w-17.5 px-2.5 py-2 rounded-lg text-xs font-medium border-2 transition text-center ${
-                                        localFilters.hlsFilter === opt.value
-                                            ? 'border-red-500 bg-red-500/20 text-red-300'
-                                            : 'border-slate-600 bg-slate-700 text-slate-300 hover:bg-slate-600'
-                                    }`}
-                                >
-                                    <div>{opt.label}</div>
-                                    <div className="text-slate-400 text-[10px]">{opt.sub}</div>
-                                </button>
-                            ))}
-                        </div>
-                    </Section>
+                    {/* ── Streaming — videos only ───────────────────────── */}
+                    {(isVideoOnly || ct === 'all') && (
+                        <Section title="Streaming">
+                            <div className="flex gap-2 flex-wrap">
+                                {[
+                                    { value: '',               label: 'All',            sub: 'no filter' },
+                                    { value: 'transcoded',     label: 'Transcoded',     sub: 'HLS ready' },
+                                    { value: 'not_transcoded', label: 'Not transcoded', sub: 'raw stream' },
+                                ].map(opt => (
+                                    <button
+                                        key={opt.value}
+                                        onClick={() => handleChange('hlsFilter', opt.value)}
+                                        className={`flex-1 min-w-[4.5rem] px-2.5 py-2 rounded-lg text-xs font-medium border-2 transition text-center ${
+                                            localFilters.hlsFilter === opt.value
+                                                ? 'border-red-500 bg-red-500/20 text-red-300'
+                                                : 'border-slate-600 bg-slate-700 text-slate-300 hover:bg-slate-600'
+                                        }`}
+                                    >
+                                        <div>{opt.label}</div>
+                                        <div className="text-slate-400 text-[10px]">{opt.sub}</div>
+                                    </button>
+                                ))}
+                            </div>
+                        </Section>
+                    )}
 
+                    {/* ── Tag sections — merged across all content types ─── */}
                     {studios.length    > 0 && <TagSection title="Studios"    field="studios"    localFilters={localFilters} onCycle={handleCycle} allItems={studios}    />}
                     {actors.length     > 0 && <TagSection title="Actors"     field="actors"     localFilters={localFilters} onCycle={handleCycle} allItems={actors}     />}
                     {characters.length > 0 && <TagSection title="Characters" field="characters" localFilters={localFilters} onCycle={handleCycle} allItems={characters} />}
                     {tags.length       > 0 && <TagSection title="Tags"       field="tags"       localFilters={localFilters} onCycle={handleCycle} allItems={tags}       />}
 
+                    {/* ── Active filter summary ─────────────────────────── */}
                     {activeCount > 0 && (
                         <div className="mb-4 p-3 bg-slate-800 rounded-lg">
                             <p className="text-xs text-slate-400 mb-2">Active filters:</p>
                             <div className="flex flex-wrap gap-1 text-xs">
+                                {ct !== 'all'                 && <Badge label={`Type: ${ct}`} color="blue" />}
                                 {localFilters.favorite        && <Badge label="❤ Favorites" color="red" />}
                                 {localFilters.year            && <Badge label={`Year: ${localFilters.year}`} color="green" />}
                                 {localFilters.durationFilter  && <Badge label={`Duration: ${localFilters.durationFilter}`} color="green" />}
@@ -347,17 +418,14 @@ function FilterSidebar({ isOpen, onClose, onFilterChange, currentFilters }) {
 }
 
 // ─── TagSection ───────────────────────────────────────────────────────────────
-// allItems: { value: string, count: number }[]
 function TagSection({ title, field, allItems, localFilters, onCycle }) {
     const [search, setSearch] = useState('');
     const [filtered, setFiltered] = useState(allItems);
-
     const searchTerm = useDebounce(search, 300);
 
     useEffect(() => {
         if (!search) { setFiltered(allItems); return; }
         if (!searchTerm) return;
-
         const matched = getSuggestions(searchTerm, allItems.map(i => i.value), { limit: 10 }).map(s => s.value);
         setFiltered(matched.map(v => ({ value: v, count: allItems.find(i => i.value === v)?.count || 0 })));
     }, [searchTerm, search, allItems]);
@@ -365,18 +433,16 @@ function TagSection({ title, field, allItems, localFilters, onCycle }) {
     const included = localFilters[field] || [];
     const excluded = localFilters[`${field}Exclude`] || [];
     const activeCount = included.length + excluded.length;
-
-    // Total video count across all visible items in this section
     const totalCount = allItems.reduce((s, i) => s + (i.count || 0), 0);
 
     return (
         <Section title={
-            <span className="flex items-center gap-2">
+            <span className="flex items-center gap-2 w-full">
                 {title}
                 {activeCount > 0 && (
                     <span className="text-xs font-normal text-slate-400">({activeCount} selected)</span>
                 )}
-                <span className="ml-auto text-xs font-normal text-slate-500">{totalCount} videos</span>
+                <span className="ml-auto text-xs font-normal text-slate-500">{totalCount}</span>
             </span>
         }>
             {allItems.length > 6 && (
@@ -386,7 +452,7 @@ function TagSection({ title, field, allItems, localFilters, onCycle }) {
                         value={search}
                         onChange={e => setSearch(e.target.value)}
                         placeholder={`Filter ${title.toLowerCase()}…`}
-                        className="w-full pl-3 pr-8 py-1.5 bg-slate-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 text-xs" 
+                        className="w-full pl-3 pr-8 py-1.5 bg-slate-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 text-xs"
                     />
                     {search && (
                         <button onClick={() => setSearch('')} className="absolute top-1/2 right-2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition">
@@ -417,7 +483,6 @@ function TagSection({ title, field, allItems, localFilters, onCycle }) {
                             >
                                 {isIncluded && <span>✓ </span>}{isExcluded && <span>✗ </span>}
                                 {item.value}
-                                {/* Count badge */}
                                 <span className={`ml-0.5 px-1 py-0 rounded text-[10px] leading-4 font-mono ${
                                     isIncluded ? 'bg-green-500/30 text-green-200'
                                     : isExcluded ? 'bg-red-500/30 text-red-200'
@@ -451,7 +516,12 @@ function Section({ title, children }) {
 }
 
 function Badge({ label, color = 'slate' }) {
-    const map = { red: 'bg-red-500/20 text-red-400', green: 'bg-green-500/20 text-green-400', slate: 'bg-slate-600 text-slate-300' };
+    const map = {
+        red:   'bg-red-500/20 text-red-400',
+        green: 'bg-green-500/20 text-green-400',
+        blue:  'bg-blue-500/20 text-blue-400',
+        slate: 'bg-slate-600 text-slate-300',
+    };
     return <span className={`px-2 py-0.5 rounded text-xs ${map[color] || map.slate}`}>{label}</span>;
 }
 

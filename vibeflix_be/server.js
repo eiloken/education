@@ -16,14 +16,16 @@ import favoritesRoutes from './routes/favorites.js';
 import historyRoutes   from './routes/history.js';
 import activityRoutes  from './routes/activity.js';
 import backupRoutes    from './routes/backup.js';
+import albumRoutes from './routes/albums.js';
 
-export let uploadDir    = process.env.ABS_UPLOAD_PATH;
-export let thumbnailDir = process.env.ABS_THUMBNAIL_PATH;
-export let backupDir    = process.env.ABS_BACKUP_PATH;
+export let uploadDir    = process.env.ABS_UPLOAD_PATH || path.join(process.cwd(), 'movies');
+export let thumbnailDir = process.env.ABS_THUMBNAIL_PATH || path.join(process.cwd(), 'thumbnails');
+export let backupDir    = process.env.ABS_BACKUP_PATH || path.join(process.cwd(), 'backups');
+export let imagesDir = process.env.ABS_IMAGES_PATH || path.join(process.cwd(), 'images');
 export const MAX_TRANSCODE_RES = parseInt(process.env.MAX_TRANSCODE_RES || 1080);
 export const MAX_TRANSCODE_JOBS = parseInt(process.env.MAX_TRANSCODE_JOBS || 1);
 
-for (const [label, dir] of [['upload', uploadDir], ['thumbnail', thumbnailDir], ['backup', backupDir]]) {
+for (const [label, dir] of [['upload', uploadDir], ['thumbnail', thumbnailDir], ['backup', backupDir], ['images', imagesDir]]) {
     if (!fs.existsSync(dir)) {
         try { fs.mkdirSync(dir, { recursive: true }); }
         catch (err) { console.error(`Could not create ${label} directory`, err); process.exit(1); }
@@ -80,6 +82,7 @@ mongoose.connect(MONGO_URL)
 // ── Static files ───────────────────────────────────────────────────────────────
 app.use('/api/movies',     express.static(uploadDir));
 app.use('/api/thumbnails', express.static(thumbnailDir));
+app.use('/api/images', express.static(imagesDir));
 
 // ── Routes ─────────────────────────────────────────────────────────────────────
 app.use('/api/auth',      authRoutes);
@@ -90,6 +93,7 @@ app.use('/api/stats',     statsRoutes);
 app.use('/api/backup',    backupRoutes);
 app.use('/api/videos',    videoRoutes);
 app.use('/api/series',    seriesRoutes);
+app.use('/api/albums', albumRoutes);
 
 app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', message: 'Vibeflix API is healthy', timeStamp: new Date().toISOString() });

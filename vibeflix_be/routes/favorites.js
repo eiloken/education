@@ -2,6 +2,8 @@ import express from 'express';
 import Favorite from '../models/Favorite.js';
 import Video from '../models/Video.js';
 import Series from '../models/Series.js';
+import Album from '../models/Album.js';
+import AlbumImage from '../models/AlbumImage.js';
 import { authenticate } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
@@ -22,21 +24,62 @@ router.get('/', authenticate, async (req, res) => {
         // Hydrate items in one batch per type
         const videoIds  = favs.filter(f => f.itemType === 'video').map(f => f.itemId);
         const seriesIds = favs.filter(f => f.itemType === 'series').map(f => f.itemId);
+        const albumIds  = favs.filter(f => f.itemType === 'album' ).map(f => f.itemId);
+        const albumImageIds = favs.filter(f => f.itemType === 'albumImage').map(f => f.itemId); 
 
-        const [videos, seriesList] = await Promise.all([
-            videoIds.length  ? Video.find({ _id: { $in: videoIds } }).lean()  : [],
-            seriesIds.length ? Series.find({ _id: { $in: seriesIds } }).lean() : [],
+        const [videos, seriesDocs, albumDocs, albumImageDocs] = await Promise.all([
+            videoIds.length  ? Video.find({ _id: { $in: videoIds  } }, 'title thumbnailPath').lean() : [],
+            seriesIds.length ? Series.find({ _id: { $in: seriesIds } }, 'title thumbnailPath').lean() : [],
+            albumIds.length 
+                ? Album.aggregate([
+                    { $match: { _id: { $in: albumIds } } },
+                    {
+                        $lookup: {
+                            from: 'albumimages',
+                            localField: '_id',
+                            foreignField: 'albumId',
+                            as: 'imgs',
+                            pipeline: [{ $sort: { order: 1, createdAt: 1 } }, { $limit: 4 }],
+                        },
+                    },
+                    {
+                        $addFields: {
+                            imageCount: { $size: '$imgs' },
+                            totalViews: { $sum: '$imgs.views' },
+                            // Up to 4 random image paths for the card mosaic
+                            sampleImages: {
+                                $map: {
+                                    input: { $slice: ['$imgs', 4] },
+                                    as: 'img',
+                                    in: '$$img.imagePath',
+                                },
+                            },
+                        },
+                    },
+                    { $project: { title: 1, coverPatch: 1, imageCount: 1, totalViews: 1, sampleImages: 1 } },
+                ])
+                : [],
+            albumImageIds.length ? AlbumImage.find({ _id: { $in: albumImageIds } }, 'imagePath title views albumId').lean() : [],
         ]);
 
-        const videoMap  = Object.fromEntries(videos.map(v => [v._id.toString(), v]));
-        const seriesMap = Object.fromEntries(seriesList.map(s => [s._id.toString(), s]));
-
-        const items = favs.map(f => {
-            const item = f.itemType === 'video'
-                ? videoMap[f.itemId.toString()]
-                : seriesMap[f.itemId.toString()];
-            if (!item) return null;
-            return { ...item, _type: f.itemType, isFavorite: true, favoritedAt: f.createdAt };
+        const videoMap = Object.fromEntries(videos.map(v => [v._id.toString(), { ...v,  _type: 'video' }]));
+        const seriesMap = Object.fromEntries(seriesDocs.map(s => [s._id.toString(), { ...s, _type: 'series' }]));
+        const albumMap  = Object.fromEntries(albumDocs.map(a  => [a._id.toString(), { ...a, _type: 'album'  }]));
+        const albumImageMap = Object.fromEntries((albumImageDocs || []).map(img => [img._id.toString(), { ...img, _type: 'albumImage' }]));
+        
+        const items = favs.map(fav => {
+            const sid = fav.itemId.toString();
+            const base = fav.itemType === 'video'
+                ? videoMap[sid]
+                : fav.itemType === 'series'
+                    ? seriesMap[sid]
+                    : fav.itemType === 'album'
+                        ? albumMap[sid]
+                        : fav.itemType === 'albumImage'
+                            ? albumImageMap[sid]
+                            : null;
+            if (!base) return null;
+            return { ...base, _id: fav.itemId, favoritedAt: fav.createdAt };
         }).filter(Boolean);
 
         res.json({ items, total, totalPages: Math.ceil(total / parseInt(limit)), currentPage: parseInt(page) });
