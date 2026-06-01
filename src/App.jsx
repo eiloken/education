@@ -10,7 +10,6 @@ import ChangePassword from "./components/auth/ChangePassword";
 import { Toaster } from "react-hot-toast";
 import { useAuth } from "./context/AuthContext";
 import AlbumDetail from "./components/album/AlbumDetail";
-import Albums from "./components/album/Albums";
 
 // ── Route guards ──────────────────────────────────────────────────────────────
 
@@ -54,7 +53,7 @@ function App() {
             <Route path="/series/:id" element={<SeriesDetail />} />
             <Route path="/video/:id" element={<VideoDetail />} />
             <Route path="/albums/:id" element={<AlbumDetail />} />
-            <Route path="/albums" element={<Albums />} />
+            <Route path="/albums" element={<Navigate to="/?ct=albums&mode=filtered" replace />} />
 
             {/* Admin-only routes */}
             <Route path="/upload" element={<AdminRoute><UploadVideo mode="new" /></AdminRoute>} />

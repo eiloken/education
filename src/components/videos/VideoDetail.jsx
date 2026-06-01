@@ -13,8 +13,7 @@ import {
 import { MetaChip } from "../series/SeriesCard";
 import { formatDuration } from "../../utils/format";
 import { useAuth } from "../../context/AuthContext";
-import { UserAvatarButton } from "../Home";
-import UserProfile from "../auth/UserProfile";
+import { AppHeader } from "../Home";
 import useMyStorage from "../../utils/localStorage";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -34,7 +33,6 @@ export function SeriesDetail() {
 
     const [episodesCollapsed, setEpisodesCollapsed] = useState(false);
     const [showSortPanel, setShowSortPanel]         = useState(false);
-    // Episode info panel: expanded by default on sm+ screens, collapsed on mobile
     const [infoExpanded, setInfoExpanded] = useState(() => window.innerWidth >= 640);
 
     const [epSortBy, setEpSortBy] = useMyStorage('vibeflix_ep_sort_by', 'default');
@@ -43,7 +41,6 @@ export function SeriesDetail() {
     const [autoPlay, setAutoPlay] = useMyStorage('vibeflix_ep_auto_play', true);
 
     const [episodeProgressMap, setEpisodeProgressMap] = useState({});
-    const [showProfile, setShowProfile] = useState(false);
 
     // isXl only used for episode-list max-height — does NOT branch the VideoPlayer tree
     const [isXl, setIsXl] = useState(window.innerWidth >= 1280);
@@ -303,22 +300,7 @@ export function SeriesDetail() {
         <div className="min-h-screen bg-slate-950 text-white">
 
             {/* ── Header ──────────────────────────────────────────────────────── */}
-            <header className="sticky top-0 z-30 bg-slate-950/95 backdrop-blur-sm border-b border-slate-800/60">
-                <div className="flex items-center gap-3 px-4 sm:px-6 py-2.5">
-                    <a
-                        href="/"
-                        className="text-xl sm:text-2xl font-bold text-red-500 hover:text-red-400 transition shrink-0 tracking-tight"
-                    >
-                        VIBEFLIX
-                    </a>
-
-                    <div className="ml-auto">
-                        {user && (
-                            <UserAvatarButton user={user} isAdmin={isAdmin} onClick={() => setShowProfile(true)} />
-                        )}
-                    </div>
-                </div>
-            </header>
+            <AppHeader />
 
             {/* ── Main content ─────────────────────────────────────────────────── */}
             <main className="px-3 sm:px-5 xl:px-6 py-4 sm:py-5">
@@ -705,7 +687,6 @@ export function SeriesDetail() {
                 </div>
             </main>
 
-            <UserProfile isOpen={showProfile} onClose={() => setShowProfile(false)} />
         </div>
     );
 }

@@ -1,16 +1,16 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
     ArrowLeft, Heart, Images, Upload, Trash2, Download,
     Play, Pause, X, RotateCcw, CheckSquare, Eye,
     Maximize2, Minimize2, ChevronUp, ChevronDown,
-    Pencil, User as UserIcon, Lock, Unlock, ZoomIn,
+    Pencil, Lock, Unlock, ZoomIn,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { albumAPI } from "../../api/api";
 import { useAuth } from "../../context/AuthContext";
 import AlbumFormModal from "./AlbumFormModal";
-import UserProfile from "../auth/UserProfile";
+import { AppHeader } from "../Home";
 
 // ── Slide animations ──────────────────────────────────────────────────────────
 ;(function () {
@@ -66,7 +66,7 @@ function TimerPicker({ currentTimer, onPick, onClose }) {
             {TIMERS.map(s => (
                 <button key={s} onClick={() => { onPick(s); onClose(); }}
                     className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs transition mb-0.5 ${currentTimer === s ? 'bg-pink-600 text-white' : 'text-slate-300 hover:bg-slate-800'}`}>
-                    {s === 0 ? 'Manual (no auto-advance)' : `${s}s`} 
+                    {s === 0 ? 'Manual (no auto-advance)' : `${s}s`}
                 </button>
             ))}
         </div>
@@ -109,6 +109,8 @@ function ImageViewer({ images: initImages, initialIndex, onClose, onToggleImageF
     const tDist   = useRef(null);
     const mDown   = useRef(false);
     const mLast   = useRef({ x: 0, y: 0 });
+    // Debounce React state sync after wheel gesture ends
+    const wheelSyncRef = useRef(null);
 
     const imgCount = images.length;
 
@@ -121,6 +123,11 @@ function ImageViewer({ images: initImages, initialIndex, onClose, onToggleImageF
             imgRef.current.style.transform = `translate(${px}px,${py}px) scale(${z ?? zoomR.current})`;
         }
     }, []);
+
+    // On slide change — apply the reset transform to the newly mounted img element
+    useLayoutEffect(() => {
+        applyTransform(panR.current.x, panR.current.y, zoomR.current);
+    }, [animKey, applyTransform]);
 
     // ── Fullscreen ─────────────────────────────────────────────────────────────
     useEffect(() => {
@@ -209,8 +216,8 @@ function ImageViewer({ images: initImages, initialIndex, onClose, onToggleImageF
                 if (isFS)       { document.exitFullscreen(); return; }
                 onClose();
             }
-            if (e.key === 'ArrowDown')  go(1);
-            if (e.key === 'ArrowUp')    go(-1);
+            if (e.key === 'ArrowDown' || e.key === 'ArrowRight') go(1);
+            if (e.key === 'ArrowUp'   || e.key === 'ArrowLeft')  go(-1);
             if (e.key === ' ')  { e.preventDefault(); setSsPlaying(p => !p); }
             if (e.key === '0')  resetView();
             if (e.key === 'f')  toggleFS();
@@ -220,13 +227,19 @@ function ImageViewer({ images: initImages, initialIndex, onClose, onToggleImageF
         return () => window.removeEventListener('keydown', fn);
     }, [go, onClose, showTimer, isFS, resetView, toggleFS, locked, onActivity]);
 
-    // ── Mouse wheel zoom ───────────────────────────────────────────────────────
+    // ── Mouse wheel: Ctrl+wheel = zoom, plain wheel = prev/next ──────────────
     useEffect(() => {
         const el = hitRef.current; if (!el) return;
         const fn = (e) => {
             e.preventDefault();
-            if (zoomLocked) return;
             onActivity();
+            if (!e.ctrlKey) {
+                // Plain scroll: navigate images
+                go(e.deltaY > 0 ? 1 : -1);
+                return;
+            }
+            // Ctrl held: zoom around cursor
+            if (zoomLocked) return;
             const f  = e.deltaY < 0 ? 1.12 : 1 / 1.12;
             const nz = Math.min(Math.max(zoomR.current * f, 0.2), 15);
             const rect = el.getBoundingClientRect();
@@ -235,13 +248,19 @@ function ImageViewer({ images: initImages, initialIndex, onClose, onToggleImageF
             const r  = nz / zoomR.current;
             const np = { x: cx + (panR.current.x - cx) * r, y: cy + (panR.current.y - cy) * r };
             zoomR.current = nz; panR.current = np;
-            // Apply directly + sync React state for next render
             applyTransform(np.x, np.y, nz);
-            setZoom(nz); setPan({ ...np });
+            // Update cursor immediately via DOM (no re-render)
+            el.style.cursor = nz > 1 ? 'grab' : 'default';
+            // Debounce React state sync — avoids mid-gesture re-render stutter
+            clearTimeout(wheelSyncRef.current);
+            wheelSyncRef.current = setTimeout(() => {
+                setZoom(nz);
+                setPan({ x: np.x, y: np.y });
+            }, 150);
         };
         el.addEventListener('wheel', fn, { passive: false });
-        return () => el.removeEventListener('wheel', fn);
-    }, [zoomLocked, onActivity, applyTransform]);
+        return () => { el.removeEventListener('wheel', fn); clearTimeout(wheelSyncRef.current); };
+    }, [zoomLocked, onActivity, applyTransform, go]);
 
     // ── Mouse drag — direct DOM mutation, no setState during drag ─────────────
     useEffect(() => {
@@ -250,6 +269,7 @@ function ImageViewer({ images: initImages, initialIndex, onClose, onToggleImageF
             if (e.button !== 0) return;
             mDown.current = true;
             mLast.current = { x: e.clientX, y: e.clientY };
+            el.style.cursor = 'grabbing';
         };
         const move = (e) => {
             onActivity();
@@ -264,6 +284,7 @@ function ImageViewer({ images: initImages, initialIndex, onClose, onToggleImageF
         const up = () => {
             if (!mDown.current) return;
             mDown.current = false;
+            el.style.cursor = zoomR.current > 1 ? 'grab' : 'default';
             // Sync final pan position to React state once
             setPan({ ...panR.current });
         };
@@ -300,8 +321,8 @@ function ImageViewer({ images: initImages, initialIndex, onClose, onToggleImageF
                 const nd = getTouchDist(e.touches);
                 const nz = Math.min(Math.max(zoomR.current * (nd / tDist.current), 0.2), 15);
                 zoomR.current = nz; tDist.current = nd;
+                // Direct DOM only — no setState to avoid re-render stutter during pinch
                 applyTransform(panR.current.x, panR.current.y, nz);
-                setZoom(nz);
                 return;
             }
             if (e.touches.length !== 1 || gestRef.current === 'pinch') return;
@@ -399,14 +420,13 @@ function ImageViewer({ images: initImages, initialIndex, onClose, onToggleImageF
                             alt={img.title || ''}
                             draggable={false}
                             style={{
-                                // Initial transform from React state; updated directly by applyTransform during gestures
-                                transform: `translate(${pan.x}px,${pan.y}px) scale(${zoom})`,
+                                // transform is set exclusively via applyTransform() to avoid
+                                // React re-render stutter during gestures
                                 transformOrigin: '50% 50%',
                                 maxWidth: '100%', maxHeight: '100%',
                                 objectFit: 'contain',
                                 pointerEvents: 'none', userSelect: 'none',
-                                // No CSS transition during any gesture — avoids lag/flash
-                                transition: (mDown.current || gestRef.current) ? 'none' : undefined,
+                                willChange: 'transform',
                             }}
                         />
                     </div>
@@ -414,8 +434,7 @@ function ImageViewer({ images: initImages, initialIndex, onClose, onToggleImageF
             </div>
 
             {/* ── Hit-test layer ────────────────────────────────────────────── */}
-            <div ref={hitRef} className="absolute inset-0 z-10"
-                style={{ cursor: mDown.current ? 'grabbing' : zoom > 1 ? 'grab' : 'default' }}>
+            <div ref={hitRef} className="absolute inset-0 z-10" style={{ cursor: 'default' }}>
                 {/* Up nav zone */}
                 <div onClick={e => { e.stopPropagation(); go(-1); }}
                     className="absolute top-0 left-0 w-full h-[10%] min-h-[44px] z-20 cursor-pointer flex items-start justify-center pt-2">
@@ -477,7 +496,7 @@ function ImageViewer({ images: initImages, initialIndex, onClose, onToggleImageF
                         </div>
 
                         {/* Zoom lock */}
-                        <IBtn onClick={() => setZoomLocked(z => !z)} active={zoomLocked} title={zoomLocked ? 'Unlock zoom' : 'Lock zoom'}>
+                        <IBtn onClick={() => setZoomLocked(z => !z)} active={zoomLocked} title={zoomLocked ? 'Unlock zoom' : 'Lock zoom (Ctrl+Wheel to zoom, Wheel to navigate)'}>
                             <ZoomIn className={`w-5 h-5 ${zoomLocked ? 'opacity-50' : ''}`} />
                         </IBtn>
 
@@ -540,7 +559,6 @@ export default function AlbumDetail() {
 
     const [uploading,   setUploading]   = useState(false);
     const [showEdit,    setShowEdit]    = useState(false);
-    const [showProfile, setShowProfile] = useState(false);
     const [deleting,    setDeleting]    = useState(false);
     const uploadRef = useRef(null);
 
@@ -650,42 +668,31 @@ export default function AlbumDetail() {
     return (
         <div className="min-h-screen bg-slate-950">
             {/* ── Top Bar ───────────────────────────────────────────────────── */}
-            <header className="sticky top-0 z-20 bg-slate-950/95 backdrop-blur-sm border-b border-slate-800">
-                <div className="flex items-center gap-2 px-4 py-3">
-                    <a href="/" className="text-xl font-bold text-red-500 hover:text-red-400 transition shrink-0">VIBEFLIX</a>
-                    <button onClick={() => navigate(-1)} className="p-1.5 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition shrink-0">
-                        <ArrowLeft className="w-4 h-4" />
-                    </button>
-                    <div className="flex-1 min-w-0">
-                        <h1 className="text-white font-bold text-sm sm:text-base truncate">{album?.title}</h1>
+            <AppHeader
+                onBack={() => navigate(-1)}
+                title={album?.title}
+                actions={isAdmin && (
+                    <div className="flex items-center gap-1.5">
+                        <button onClick={() => setShowEdit(true)}
+                            className="p-1.5 bg-slate-800 text-slate-400 hover:text-white rounded-lg transition" title="Edit album">
+                            <Pencil className="w-4 h-4" />
+                        </button>
+                        <button onClick={() => uploadRef.current?.click()} disabled={uploading}
+                            className="flex items-center gap-1 px-2.5 py-1.5 bg-pink-600 hover:bg-pink-500 disabled:opacity-50 text-white rounded-lg text-xs font-medium transition">
+                            {uploading
+                                ? <><div className="w-3 h-3 border-b border-white rounded-full animate-spin" /> Adding…</>
+                                : <><Upload className="w-3.5 h-3.5" /> Add</>}
+                        </button>
+                        <button onClick={handleDeleteAlbum} disabled={deleting}
+                            className="flex items-center gap-1 px-2.5 py-1.5 bg-red-700 hover:bg-red-600 disabled:opacity-50 text-white rounded-lg text-xs font-medium transition" title="Delete entire album">
+                            {deleting ? <div className="w-3 h-3 border-b border-white rounded-full animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                            <span className="hidden sm:inline">Delete Album</span>
+                        </button>
+                        <input ref={uploadRef} type="file" multiple accept="image/*" className="hidden"
+                            onChange={e => handleUpload(e.target.files)} />
                     </div>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                        {isAdmin && (
-                            <>
-                                <button onClick={() => setShowEdit(true)} className="p-1.5 bg-slate-800 text-slate-400 hover:text-white rounded-lg transition" title="Edit album">
-                                    <Pencil className="w-4 h-4" />
-                                </button>
-                                <button onClick={() => uploadRef.current?.click()} disabled={uploading}
-                                    className="flex items-center gap-1 px-2.5 py-1.5 bg-pink-600 hover:bg-pink-500 disabled:opacity-50 text-white rounded-lg text-xs font-medium transition">
-                                    {uploading ? <><div className="w-3 h-3 border-b border-white rounded-full animate-spin" /> Adding…</> : <><Upload className="w-3.5 h-3.5" /> Add</>}
-                                </button>
-                                <button onClick={handleDeleteAlbum} disabled={deleting}
-                                    className="flex items-center gap-1 px-2.5 py-1.5 bg-red-700 hover:bg-red-600 disabled:opacity-50 text-white rounded-lg text-xs font-medium transition" title="Delete entire album">
-                                    {deleting ? <div className="w-3 h-3 border-b border-white rounded-full animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-                                    <span className="hidden sm:inline">Delete Album</span>
-                                </button>
-                                <input ref={uploadRef} type="file" multiple accept="image/*" className="hidden" onChange={e => handleUpload(e.target.files)} />
-                            </>
-                        )}
-                        {user && (
-                            <button onClick={() => setShowProfile(true)}
-                                className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center hover:bg-slate-600 ring-2 ring-transparent hover:ring-pink-500 transition text-white font-semibold text-xs uppercase">
-                                {user.username?.[0] ?? <UserIcon className="w-4 h-4 text-slate-400" />}
-                            </button>
-                        )}
-                    </div>
-                </div>
-            </header>
+                )}
+            />
 
             <div className="px-4 sm:px-6 pb-10 pt-4 max-w-7xl mx-auto space-y-5">
                 {/* Album info */}
@@ -836,7 +843,6 @@ export default function AlbumDetail() {
             {showEdit && (
                 <AlbumFormModal album={album} onSaved={() => { setShowEdit(false); load(); }} onClose={() => setShowEdit(false)} />
             )}
-            <UserProfile isOpen={showProfile} onClose={() => setShowProfile(false)} />
         </div>
     );
 }

@@ -164,18 +164,16 @@ export const albumAPI = {
     recordView: async (imageId) => (await axios.patch(`${API_URL}/api/albums/images/${imageId}/view`)).data,
     // Favorites
     toggleFavorite: async (id) => (await axios.patch(`${API_URL}/api/albums/${id}/favorite`)).data,
-    // Download (returns URL — open in browser to trigger zip download)
-    downloadAlbum: async (albumId, imageIds = null) => {
+    // Download — uses a hidden anchor so the browser handles auth cookies naturally
+    downloadAlbum: (albumId, imageIds = null) => {
         const ids = imageIds?.length ? `?ids=${imageIds.join(',')}` : '';
-        const res = await axios.get(`${API_URL}/api/albums/${albumId}/download${ids}`, {
-            responseType: 'blob',
-        });
-        const url  = URL.createObjectURL(res.data);
+        const url = `${API_URL}/api/albums/${albumId}/download${ids}`;
         const a = document.createElement('a');
         a.href = url;
         a.download = 'album.zip';
+        document.body.appendChild(a);
         a.click();
-        URL.revokeObjectURL(url);
+        document.body.removeChild(a);
     },
     // Static file URL helpers
     imageUrl: (fileName) => `${API_URL}/api/images/${fileName}`,

@@ -148,7 +148,7 @@ router.get('/metadata/characters', async (req, res) => { try { res.json((await A
 
 // ─── GET /api/albums/:id/download — zip selected images ──────────────────────
 // Query: ?ids=id1,id2,id3  (omit for all images)
-router.get("/:id/download", authenticate, async (req, res) => {
+router.get("/:id/download", async (req, res) => {
     try {
         const album = await Album.findById(req.params.id).lean();
         if (!album) return res.status(404).json({ error: 'Album not found' });
@@ -183,6 +183,7 @@ router.get("/:id/download", authenticate, async (req, res) => {
 
         await archive.finalize();
     } catch (e) {
+        console.error(e);
         if (!res.headersSent) res.status(500).json({ error: e.message });
     }
 });
