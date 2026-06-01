@@ -155,8 +155,18 @@ export const albumAPI = {
     // Albums CRUD
     getAlbums: async (params = {}) => (await axios.get(`${API_URL}/api/albums`, { params })).data,
     getAlbum: async (id) => (await axios.get(`${API_URL}/api/albums/${id}`)).data,
-    createAlbum: async (formData) => (await axios.post(`${API_URL}/api/albums`, formData, { headers: { 'Content-Type': 'multipart/form-data' }, })).data,
-    updateAlbum: async (id, formData) => (await axios.put(`${API_URL}/api/albums/${id}`, formData, { headers: { 'Content-Type': 'multipart/form-data' }, })).data,
+    createAlbum: async (data) => {
+        const isForm = data instanceof FormData;
+        return (await axios.post(`${API_URL}/api/albums`, data,
+            isForm ? { headers: { 'Content-Type': 'multipart/form-data' } } : {}
+        )).data;
+    },
+    updateAlbum: async (id, data) => {
+        const isForm = data instanceof FormData;
+        return (await axios.put(`${API_URL}/api/albums/${id}`, data,
+            isForm ? { headers: { 'Content-Type': 'multipart/form-data' } } : {}
+        )).data;
+    },
     deleteAlbum: async (id) => (await axios.delete(`${API_URL}/api/albums/${id}`)).data,
     // Images
     uploadImages: async (albumId, formData) => (await axios.post(`${API_URL}/api/albums/${albumId}/images`, formData, { headers: { 'Content-Type': 'multipart/form-data' }, })).data,
@@ -177,6 +187,20 @@ export const albumAPI = {
     },
     // Static file URL helpers
     imageUrl: (fileName) => `${API_URL}/api/images/${fileName}`,
+    // Thumbnail URL — 400px max, JPEG, lazy-generated on first request
+    thumbUrl:  (fileName) => fileName ? `${API_URL}/api/albums/thumb/${fileName}` : '',
     getMetadata: async (type) => (await axios.get(`${API_URL}/api/albums/metadata/${type}`)).data,
     toggleImageFavorite: async (imageId) => (await axios.patch(`${API_URL}/api/albums/images/${imageId}/favorite`)).data,
+    // Re-roll a random mosaic cover from the album's existing images
+    refreshCover:  async (id) => (await axios.post(`${API_URL}/api/albums/${id}/refresh-cover`)).data,
+    // Regenerate the composite mosaic thumbnail for an album
+    generateMosaic: async (id) => (await axios.post(`${API_URL}/api/albums/${id}/generate-mosaic`)).data,
+    // Batch-generate all missing thumbs — returns an EventSource for SSE progress
+    generateThumbsStream: () => {
+        // POST via fetch then read as stream; EventSource only supports GET
+        return fetch(`${API_URL}/api/albums/generate-thumbs`, {
+            method: 'POST',
+            credentials: 'include',
+        });
+    },
 };

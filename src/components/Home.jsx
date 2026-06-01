@@ -57,31 +57,45 @@ function useActivityPing() {
     }, []);
 }
 
+// ─── Album cover — single pre-composited mosaic image ────────────────────────
+function AlbumCoverMosaic({ coverPath, title }) {
+    const ref = useRef(null);
+    const [visible, setVisible] = useState(false);
+    useEffect(() => {
+        const el = ref.current; if (!el) return;
+        const ob = new IntersectionObserver(
+            ([e]) => { if (e.isIntersecting) { setVisible(true); ob.disconnect(); } },
+            { rootMargin: '300px' }
+        );
+        ob.observe(el);
+        return () => ob.disconnect();
+    }, []);
+    return (
+        <div ref={ref} className="w-full h-full">
+            {!visible ? (
+                <div className="w-full h-full bg-slate-800 animate-pulse" />
+            ) : coverPath ? (
+                <img src={albumAPI.imageUrl(coverPath)} alt={title}
+                    loading="lazy" decoding="async"
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+            ) : (
+                <div className="w-full h-full flex items-center justify-center bg-slate-800">
+                    <Images className="w-10 h-10 text-slate-600" />
+                </div>
+            )}
+        </div>
+    );
+}
+
 // ─── Inline AlbumCard (for home row) ─────────────────────────────────────────
 function HomeAlbumCard({ album, onToggleFavorite }) {
-    const { title, sampleImages = [], imageCount = 0, isFavorite } = album;
+    const { title, imageCount = 0, isFavorite, mosaicPath, coverPath } = album;
+    const cover = mosaicPath || coverPath;
     return (
-        <a
-            href={`/albums/${album._id}`}
-            className="relative bg-slate-900 rounded-xl overflow-hidden border border-slate-800 hover:border-slate-600 transition cursor-pointer group flex flex-col h-full"
-        >
+        <a href={`/albums/${album._id}`}
+            className="relative bg-slate-900 rounded-xl overflow-hidden border border-slate-800 hover:border-slate-600 transition cursor-pointer group flex flex-col h-full">
             <div className="relative aspect-video bg-slate-800 overflow-hidden flex-none">
-                {sampleImages.length === 0 ? (
-                    <div className="w-full h-full flex items-center justify-center">
-                        <Images className="w-10 h-10 text-slate-600" />
-                    </div>
-                ) : sampleImages.length === 1 ? (
-                    <img src={albumAPI.imageUrl(sampleImages[0])} alt={title}
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" loading="lazy" />
-                ) : (
-                    <div className={`w-full h-full grid gap-0.5 ${sampleImages.length >= 4 ? 'grid-cols-2 grid-rows-2' : 'grid-cols-2'}`}>
-                        {sampleImages.slice(0, 4).map((img, i) => (
-                            <img key={i} src={albumAPI.imageUrl(img)} alt="" loading="lazy"
-                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                                style={{ transitionDelay: `${i * 40}ms` }} />
-                        ))}
-                    </div>
-                )}
+                <AlbumCoverMosaic coverPath={cover} title={title} />
                 <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
                 <div className="absolute top-1.5 left-1.5 px-1.5 py-0.5 bg-pink-600 text-white text-xs font-bold rounded uppercase">Album</div>
                 <div className="absolute bottom-1.5 right-1.5 flex items-center gap-1 px-1.5 py-0.5 bg-black/80 text-white text-xs rounded font-medium">
@@ -962,28 +976,21 @@ function EmptyState({ hasFilters, navigate, isAdmin }) {
 }
 
 // ─── AppHeader — shared sticky header for all pages ──────────────────────────
-export function AppHeader({ onBack, title, actions }) {
+export function AppHeader({ actions }) {
     const { user, isAdmin } = useAuth();
     const [showProfile, setShowProfile] = useState(false);
     return (
         <>
             <header className="sticky top-0 z-30 bg-slate-950/95 backdrop-blur-sm border-b border-slate-800">
-                <div className="flex items-center gap-2 px-4 sm:px-6 py-2.5">
+                <div className="flex items-center justify-between gap-2 px-4 sm:px-6 py-2.5">
                     <a href="/"
                         className="text-xl sm:text-2xl font-bold text-red-500 hover:text-red-400 transition shrink-0 tracking-tight">
                         VIBEFLIX
                     </a>
-                    {onBack && (
-                        <button onClick={onBack}
-                            className="p-1.5 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition shrink-0">
-                            <ArrowLeft className="w-4 h-4" />
-                        </button>
-                    )}
-                    {title
-                        ? <div className="flex-1 min-w-0"><h1 className="text-white font-bold text-sm sm:text-base truncate">{title}</h1></div>
-                        : <div className="flex-1" />}
-                    {actions}
-                    {user && <UserAvatarButton user={user} isAdmin={isAdmin} onClick={() => setShowProfile(true)} />}
+                    <div className="flex items-center gap-2">
+                        {actions}
+                        {user && <UserAvatarButton user={user} isAdmin={isAdmin} onClick={() => setShowProfile(true)} />}
+                    </div>
                 </div>
             </header>
             <UserProfile isOpen={showProfile} onClose={() => setShowProfile(false)} />

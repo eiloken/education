@@ -1,10 +1,12 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
     ArrowLeft, Heart, Images, Upload, Trash2, Download,
     Play, Pause, X, RotateCcw, CheckSquare, Eye,
     Maximize2, Minimize2, ChevronUp, ChevronDown,
-    Pencil, Lock, Unlock, ZoomIn,
+    Pencil, Lock, Unlock, ZoomIn, RefreshCw,
+    LayoutGrid, AlignJustify, SlidersHorizontal,
+    ArrowUpDown, Calendar, Star,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { albumAPI } from "../../api/api";
@@ -30,25 +32,49 @@ function getTouchDist(t) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// FILMSTRIP — vertical strip on the left
+// FILMSTRIP — virtual rendering: only ±20 items around activeIdx
 // ─────────────────────────────────────────────────────────────────────────────
+const STRIP_WINDOW = 20;
 function FilmStrip({ images, activeIdx, onSelect, visible }) {
     const stripRef = useRef(null);
+
+    // Scroll active item into view
     useEffect(() => {
-        stripRef.current?.children?.[activeIdx]
-            ?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        const container = stripRef.current;
+        if (!container) return;
+        // The active item's rendered index within the window
+        const start = Math.max(0, activeIdx - STRIP_WINDOW);
+        const localIdx = activeIdx - start;
+        const child = container.children[localIdx];
+        child?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }, [activeIdx]);
+
+    // Only render a window around the active index
+    const start = Math.max(0, activeIdx - STRIP_WINDOW);
+    const end   = Math.min(images.length, activeIdx + STRIP_WINDOW + 1);
+    const slice = images.slice(start, end);
+
+    // Pad top/bottom with spacers so scroll position stays stable
+    const topPad    = start * 40; // approx 36px + 4px gap per item
+    const bottomPad = (images.length - end) * 40;
 
     return (
         <div className={`absolute left-0 top-0 bottom-0 z-20 overflow-y-auto transition-opacity duration-300 ${visible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
             style={{ width: 52, background: 'linear-gradient(to right,rgba(0,0,0,.75),transparent)', scrollbarWidth: 'none' }}>
             <div ref={stripRef} className="flex flex-col items-center gap-1 py-2 px-1">
-                {images.map((img, i) => (
-                    <button key={img._id} onClick={() => onSelect(i)}
-                        className={`shrink-0 w-9 h-9 rounded overflow-hidden border-2 transition-all ${i === activeIdx ? 'border-pink-500 opacity-100' : 'border-transparent opacity-40 hover:opacity-70'}`}>
-                        <img src={albumAPI.imageUrl(img.imagePath)} alt="" className="w-full h-full object-cover" loading="lazy" />
-                    </button>
-                ))}
+                {topPad > 0 && <div style={{ height: topPad, minHeight: topPad, flexShrink: 0 }} />}
+                {slice.map((img, li) => {
+                    const i = start + li;
+                    return (
+                        <button key={img._id} onClick={() => onSelect(i)}
+                            className={`shrink-0 w-9 h-9 rounded overflow-hidden border-2 transition-all ${i === activeIdx ? 'border-pink-500 opacity-100' : 'border-transparent opacity-40 hover:opacity-70'}`}>
+                            <img src={albumAPI.thumbUrl(img.imagePath)} alt=""
+                                loading="lazy" decoding="async"
+                                className="w-full h-full object-cover" />
+                        </button>
+                    );
+                })}
+                {bottomPad > 0 && <div style={{ height: bottomPad, minHeight: bottomPad, flexShrink: 0 }} />}
             </div>
         </div>
     );
@@ -77,54 +103,49 @@ function TimerPicker({ currentTimer, onPick, onClose }) {
 // IMAGE VIEWER
 // ─────────────────────────────────────────────────────────────────────────────
 function ImageViewer({ images: initImages, initialIndex, onClose, onToggleImageFavorite }) {
-    const [images,    setImages]    = useState(initImages);
-    const [idx,       setIdx]       = useState(initialIndex);
-    const [slideDir,  setSlideDir]  = useState(1);
-    const [animKey,   setAnimKey]   = useState(0);
-    const [zoom,      setZoom]      = useState(1);
-    // pan is ONLY used to feed the img style on re-render;
-    // during drag we write directly to imgRef.current.style
-    const [pan,       setPan]       = useState({ x: 0, y: 0 });
+    const [images, setImages] = useState(initImages);
+    const [idx, setIdx] = useState(initialIndex);
+    const [slideDir, setSlideDir] = useState(1);
+    const [animKey, setAnimKey] = useState(0);
+    const [zoom, setZoom] = useState(1);
+    const [pan, setPan] = useState({ x: 0, y: 0 });
 
-    const [ctrlsOn,    setCtrlsOn]    = useState(true);
-    const [locked,     setLocked]     = useState(false);
+    const [ctrlsOn, setCtrlsOn] = useState(true);
+    const [locked, setLocked] = useState(false);
     const [zoomLocked, setZoomLocked] = useState(false);
-    const [ssPlaying,  setSsPlaying]  = useState(false);
-    const [ssTimer,    setSsTimer]    = useState(10);
-    const [showTimer,  setShowTimer]  = useState(false);
-    const [isFS,       setIsFS]       = useState(false);
+    const [ssPlaying, setSsPlaying] = useState(false);
+    const [ssTimer, setSsTimer] = useState(10);
+    const [showTimer, setShowTimer] = useState(false);
+    const [isFS, setIsFS] = useState(false);
 
     const viewerRef = useRef(null);
-    const hitRef    = useRef(null);
-    // Direct ref to the <img> so we can mutate transform without setState
-    const imgRef    = useRef(null);
+    const hitRef = useRef(null);
+    const imgRef = useRef(null);
 
-    // All gesture state as refs — never cause re-renders during a gesture
-    const zoomR   = useRef(1);
-    const panR    = useRef({ x: 0, y: 0 });
-    const hideT   = useRef(null);
-    const gestRef = useRef(null);   // null | 'pan' | 'swipe' | 'pinch'
-    const tStart  = useRef(null);
-    const tLast   = useRef({ x: 0, y: 0 });
-    const tDist   = useRef(null);
-    const mDown   = useRef(false);
-    const mLast   = useRef({ x: 0, y: 0 });
-    // Debounce React state sync after wheel gesture ends
+    // Gesture refs — never cause re-renders
+    const zoomR = useRef(1);
+    const panR = useRef({ x: 0, y: 0 });
+    const hideT = useRef(null);
+    const gestRef = useRef(null);
+    const tStart = useRef(null);
+    const tLast = useRef({ x: 0, y: 0 });
+    const tDist = useRef(null);
+    const mDown = useRef(false);
+    const mLast = useRef({ x: 0, y: 0 });
     const wheelSyncRef = useRef(null);
+    // ① One-scroll = one image: lock navigation until the scroll gesture ends
+    const wheelNavLockRef = useRef(false);
+    const wheelNavTimer   = useRef(null);
 
     const imgCount = images.length;
 
-    // Keep zoom ref in sync (pan ref is updated directly during gestures)
     useEffect(() => { zoomR.current = zoom; }, [zoom]);
 
-    // ── Apply transform directly to DOM element (zero React overhead) ──────────
     const applyTransform = useCallback((px, py, z) => {
-        if (imgRef.current) {
+        if (imgRef.current)
             imgRef.current.style.transform = `translate(${px}px,${py}px) scale(${z ?? zoomR.current})`;
-        }
     }, []);
 
-    // On slide change — apply the reset transform to the newly mounted img element
     useLayoutEffect(() => {
         applyTransform(panR.current.x, panR.current.y, zoomR.current);
     }, [animKey, applyTransform]);
@@ -140,40 +161,29 @@ function ImageViewer({ images: initImages, initialIndex, onClose, onToggleImageF
         else await document.exitFullscreen?.();
     }, []);
 
-    // ── Controls: only auto-hide when slideshow is playing ────────────────────
-    const stopHide = useCallback(() => clearTimeout(hideT.current), []);
+    // ── Controls auto-hide ─────────────────────────────────────────────────────
+    const stopHide  = useCallback(() => clearTimeout(hideT.current), []);
     const startHide = useCallback(() => {
         clearTimeout(hideT.current);
         hideT.current = setTimeout(() => setCtrlsOn(false), 3000);
     }, []);
-
-    // When slideshow starts → begin auto-hide cycle; when stops → always show
     useEffect(() => {
-        if (ssPlaying) {
-            startHide();
-        } else {
-            stopHide();
-            setCtrlsOn(true);
-        }
+        if (ssPlaying) { startHide(); } else { stopHide(); setCtrlsOn(true); }
         return () => stopHide();
     }, [ssPlaying, startHide, stopHide]);
-
-    // In slideshow mode, any interaction resets the hide timer
     const onActivity = useCallback(() => {
         if (locked) return;
         setCtrlsOn(true);
         if (ssPlaying) startHide();
     }, [locked, ssPlaying, startHide]);
 
-    // ── Reset view ─────────────────────────────────────────────────────────────
+    // ── Reset / navigate ───────────────────────────────────────────────────────
     const resetView = useCallback(() => {
-        panR.current = { x: 0, y: 0 };
+        panR.current = { x: 0, y: 0 }; zoomR.current = 1;
         setZoom(1); setPan({ x: 0, y: 0 });
-        zoomR.current = 1;
         applyTransform(0, 0, 1);
     }, [applyTransform]);
 
-    // ── Navigate ───────────────────────────────────────────────────────────────
     const go = useCallback((d) => {
         setSlideDir(d);
         setIdx(i => (i + d + imgCount) % imgCount);
@@ -191,12 +201,9 @@ function ImageViewer({ images: initImages, initialIndex, onClose, onToggleImageF
         const id = setInterval(() => go(1), ssTimer * 1000);
         return () => clearInterval(id);
     }, [ssPlaying, ssTimer, go]);
+    useEffect(() => { if (ssPlaying && ssTimer > 0) setZoomLocked(true); }, [ssPlaying, ssTimer]);
 
-    useEffect(() => {
-        if (ssPlaying && ssTimer > 0) setZoomLocked(true);
-    }, [ssPlaying, ssTimer]);
-
-    // ── Image favorite ─────────────────────────────────────────────────────────
+    // ── Favorite ───────────────────────────────────────────────────────────────
     const toggleFav = useCallback(async () => {
         const img = images[idx]; if (!img?._id) return;
         try {
@@ -211,9 +218,9 @@ function ImageViewer({ images: initImages, initialIndex, onClose, onToggleImageF
         const fn = (e) => {
             onActivity();
             if (e.key === 'Escape') {
-                if (locked)     { setLocked(false); return; }
-                if (showTimer)  { setShowTimer(false); return; }
-                if (isFS)       { document.exitFullscreen(); return; }
+                if (locked) { setLocked(false); return; }
+                if (showTimer) { setShowTimer(false); return; }
+                if (isFS) { document.exitFullscreen(); return; }
                 onClose();
             }
             if (e.key === 'ArrowDown' || e.key === 'ArrowRight') go(1);
@@ -227,42 +234,50 @@ function ImageViewer({ images: initImages, initialIndex, onClose, onToggleImageF
         return () => window.removeEventListener('keydown', fn);
     }, [go, onClose, showTimer, isFS, resetView, toggleFS, locked, onActivity]);
 
-    // ── Mouse wheel: Ctrl+wheel = zoom, plain wheel = prev/next ──────────────
+    // ── Mouse wheel: Ctrl+wheel = zoom, plain wheel = ONE image per gesture ────
     useEffect(() => {
         const el = hitRef.current; if (!el) return;
         const fn = (e) => {
             e.preventDefault();
             onActivity();
+
             if (!e.ctrlKey) {
-                // Plain scroll: navigate images
+                // ① Lock: only fire once per scroll gesture
+                if (wheelNavLockRef.current) return;
+                wheelNavLockRef.current = true;
                 go(e.deltaY > 0 ? 1 : -1);
+                // Unlock after the physical scroll wheel slows down (~600ms)
+                clearTimeout(wheelNavTimer.current);
+                wheelNavTimer.current = setTimeout(() => {
+                    wheelNavLockRef.current = false;
+                }, 600);
                 return;
             }
-            // Ctrl held: zoom around cursor
+
+            // Ctrl held → zoom around cursor
             if (zoomLocked) return;
             const f  = e.deltaY < 0 ? 1.12 : 1 / 1.12;
             const nz = Math.min(Math.max(zoomR.current * f, 0.2), 15);
             const rect = el.getBoundingClientRect();
-            const cx = e.clientX - rect.left - rect.width  / 2;
-            const cy = e.clientY - rect.top  - rect.height / 2;
+            const cx = e.clientX - rect.left  - rect.width  / 2;
+            const cy = e.clientY - rect.top   - rect.height / 2;
             const r  = nz / zoomR.current;
             const np = { x: cx + (panR.current.x - cx) * r, y: cy + (panR.current.y - cy) * r };
             zoomR.current = nz; panR.current = np;
             applyTransform(np.x, np.y, nz);
-            // Update cursor immediately via DOM (no re-render)
             el.style.cursor = nz > 1 ? 'grab' : 'default';
-            // Debounce React state sync — avoids mid-gesture re-render stutter
             clearTimeout(wheelSyncRef.current);
-            wheelSyncRef.current = setTimeout(() => {
-                setZoom(nz);
-                setPan({ x: np.x, y: np.y });
-            }, 150);
+            wheelSyncRef.current = setTimeout(() => { setZoom(nz); setPan({ x: np.x, y: np.y }); }, 150);
         };
         el.addEventListener('wheel', fn, { passive: false });
-        return () => { el.removeEventListener('wheel', fn); clearTimeout(wheelSyncRef.current); };
+        return () => {
+            el.removeEventListener('wheel', fn);
+            clearTimeout(wheelSyncRef.current);
+            clearTimeout(wheelNavTimer.current);
+        };
     }, [zoomLocked, onActivity, applyTransform, go]);
 
-    // ── Mouse drag — direct DOM mutation, no setState during drag ─────────────
+    // ── Mouse drag ─────────────────────────────────────────────────────────────
     useEffect(() => {
         const el = hitRef.current; if (!el) return;
         const down = (e) => {
@@ -278,14 +293,12 @@ function ImageViewer({ images: initImages, initialIndex, onClose, onToggleImageF
             const dy = e.clientY - mLast.current.y;
             mLast.current = { x: e.clientX, y: e.clientY };
             panR.current = { x: panR.current.x + dx, y: panR.current.y + dy };
-            // Direct DOM update — no React re-render
             applyTransform(panR.current.x, panR.current.y);
         };
         const up = () => {
             if (!mDown.current) return;
             mDown.current = false;
             el.style.cursor = zoomR.current > 1 ? 'grab' : 'default';
-            // Sync final pan position to React state once
             setPan({ ...panR.current });
         };
         el.addEventListener('mousedown', down);
@@ -298,10 +311,9 @@ function ImageViewer({ images: initImages, initialIndex, onClose, onToggleImageF
         };
     }, [zoomLocked, onActivity, applyTransform]);
 
-    // ── Touch — passive:false on touchstart so preventDefault works in move ────
+    // ── Touch ──────────────────────────────────────────────────────────────────
     useEffect(() => {
         const el = hitRef.current; if (!el) return;
-
         const start = (e) => {
             if (e.touches.length === 2) {
                 gestRef.current = 'pinch';
@@ -312,35 +324,26 @@ function ImageViewer({ images: initImages, initialIndex, onClose, onToggleImageF
                 tLast.current   = { x: e.touches[0].clientX, y: e.touches[0].clientY };
             }
         };
-
         const move = (e) => {
-            // Pinch
             if (gestRef.current === 'pinch' && e.touches.length === 2) {
                 e.preventDefault();
                 if (zoomLocked) return;
                 const nd = getTouchDist(e.touches);
                 const nz = Math.min(Math.max(zoomR.current * (nd / tDist.current), 0.2), 15);
                 zoomR.current = nz; tDist.current = nd;
-                // Direct DOM only — no setState to avoid re-render stutter during pinch
                 applyTransform(panR.current.x, panR.current.y, nz);
                 return;
             }
             if (e.touches.length !== 1 || gestRef.current === 'pinch') return;
-
             const cx = e.touches[0].clientX, cy = e.touches[0].clientY;
             const dx = cx - tLast.current.x,  dy = cy - tLast.current.y;
-
-            // Commit gesture type on first significant movement
             if (gestRef.current === null && tStart.current) {
                 const adx = Math.abs(cx - tStart.current.x);
                 const ady = Math.abs(cy - tStart.current.y);
-                if (adx > 8 || ady > 8) {
+                if (adx > 8 || ady > 8)
                     gestRef.current = (zoomR.current > 1 && !zoomLocked) ? 'pan' : 'swipe';
-                }
             }
-
             tLast.current = { x: cx, y: cy };
-
             if (gestRef.current === 'pan') {
                 e.preventDefault();
                 panR.current = { x: panR.current.x + dx, y: panR.current.y + dy };
@@ -349,16 +352,13 @@ function ImageViewer({ images: initImages, initialIndex, onClose, onToggleImageF
                 e.preventDefault();
             }
         };
-
         const end = (e) => {
             if (gestRef.current === 'pinch') {
-                // Sync zoom to React state
                 setZoom(zoomR.current);
                 gestRef.current = null; tDist.current = null;
                 return;
             }
             if (gestRef.current === 'pan') {
-                // Sync final pan to React state
                 setPan({ ...panR.current });
                 gestRef.current = null; tStart.current = null;
                 return;
@@ -367,22 +367,14 @@ function ImageViewer({ images: initImages, initialIndex, onClose, onToggleImageF
             const ch = e.changedTouches[0];
             const dx = ch.clientX - ts.x, dy = ch.clientY - ts.y;
             const dt = Date.now() - ts.t;
-
             if (gestRef.current === 'swipe' &&
-                Math.abs(dy) > 50 &&
-                Math.abs(dy) > Math.abs(dx) * 1.4 &&
-                dt < 500) {
+                Math.abs(dy) > 50 && Math.abs(dy) > Math.abs(dx) * 1.4 && dt < 500) {
                 go(dy < 0 ? 1 : -1);
             } else if (gestRef.current === null) {
-                // Tap — show controls
                 onActivity();
             }
             gestRef.current = null; tStart.current = null;
         };
-
-        // passive:false on touchstart is the fix for the cancelable warning:
-        // the browser sees we might call preventDefault, so it doesn't lock the
-        // scroll chain before our touchmove fires
         el.addEventListener('touchstart', start, { passive: false });
         el.addEventListener('touchmove',  move,  { passive: false });
         el.addEventListener('touchend',   end,   { passive: true  });
@@ -397,7 +389,6 @@ function ImageViewer({ images: initImages, initialIndex, onClose, onToggleImageF
     const show = ctrlsOn && !locked;
     const anim = slideDir > 0 ? 'vf-in-down' : 'vf-in-up';
 
-    // ── IBtn helper ───────────────────────────────────────────────────────────
     const IBtn = ({ onClick, active, title, children }) => (
         <button onClick={e => { e.stopPropagation(); onClick(); }}
             className={`p-2.5 rounded-full transition ${active ? 'bg-white/20 text-white' : 'text-white/70 hover:text-white hover:bg-white/10'}`}
@@ -408,59 +399,44 @@ function ImageViewer({ images: initImages, initialIndex, onClose, onToggleImageF
 
     return (
         <div ref={viewerRef} className="fixed inset-0 z-50 bg-black select-none overflow-hidden">
-
-            {/* ── Display layer — image only, no events ─────────────────────── */}
+            {/* ── Image display ────────────────────────────────────────────── */}
             <div className="absolute inset-0 overflow-hidden" style={{ isolation: 'isolate' }}>
                 {img && (
                     <div key={animKey} className="absolute inset-0 flex items-center justify-center"
                         style={{ animation: `${anim} 0.26s cubic-bezier(0.25,0.46,0.45,0.94) both`, willChange: 'transform' }}>
-                        <img
-                            ref={imgRef}
-                            src={albumAPI.imageUrl(img.imagePath)}
-                            alt={img.title || ''}
+                        <img ref={imgRef} src={albumAPI.imageUrl(img.imagePath)} alt={img.title || ''}
                             draggable={false}
                             style={{
-                                // transform is set exclusively via applyTransform() to avoid
-                                // React re-render stutter during gestures
                                 transformOrigin: '50% 50%',
                                 maxWidth: '100%', maxHeight: '100%',
                                 objectFit: 'contain',
                                 pointerEvents: 'none', userSelect: 'none',
                                 willChange: 'transform',
-                            }}
-                        />
+                            }} />
                     </div>
                 )}
             </div>
 
-            {/* ── Hit-test layer ────────────────────────────────────────────── */}
+            {/* ── Hit layer ────────────────────────────────────────────────── */}
             <div ref={hitRef} className="absolute inset-0 z-10" style={{ cursor: 'default' }}>
-                {/* Up nav zone */}
-                <div onClick={e => { e.stopPropagation(); go(-1); }}
-                    className="absolute top-0 left-0 w-full h-[10%] min-h-[44px] z-20 cursor-pointer flex items-start justify-center pt-2">
-                    <div className={`p-1.5 rounded-full bg-black/40 transition-opacity duration-200 ${show ? 'opacity-60 hover:opacity-100' : 'opacity-0'}`}>
-                        <ChevronUp className="w-6 h-6 text-white" />
-                    </div>
-                </div>
-                {/* Down nav zone */}
-                <div onClick={e => { e.stopPropagation(); go(1); }}
-                    className="absolute bottom-0 left-0 w-full h-[10%] min-h-[44px] z-20 cursor-pointer flex items-end justify-center pb-2">
-                    <div className={`p-1.5 rounded-full bg-black/40 transition-opacity duration-200 ${show ? 'opacity-60 hover:opacity-100' : 'opacity-0'}`}>
-                        <ChevronDown className="w-6 h-6 text-white" />
-                    </div>
-                </div>
+                <div 
+                    onClick={e => { e.stopPropagation(); go(-1); }}
+                    className="absolute top-0 left-0 w-full h-[10%] min-h-11 z-20 cursor-pointer flex items-start justify-center pt-2"
+                ></div>
+                <div 
+                    onClick={e => { e.stopPropagation(); go(1); }}
+                    className="absolute bottom-0 left-0 w-full h-[10%] min-h-11 z-20 cursor-pointer flex items-end justify-center pb-2"
+                ></div>
             </div>
 
-            {/* ── Filmstrip — vertical left strip ──────────────────────────── */}
+            {/* ── Filmstrip ────────────────────────────────────────────────── */}
             <FilmStrip images={images} activeIdx={idx} visible={show}
                 onSelect={(i) => { setSlideDir(i > idx ? 1 : -1); setIdx(i); setAnimKey(k => k + 1); resetView(); }} />
 
-            {/* ── TikTok-style right sidebar ─────────────────────────────────── */}
+            {/* ── Right sidebar ────────────────────────────────────────────── */}
             <div className={`absolute right-0 top-0 bottom-0 z-30 transition-opacity duration-300 ${show ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
                 <div className="flex flex-col items-center justify-between h-full py-3 px-1.5"
                     style={{ background: 'linear-gradient(to left,rgba(0,0,0,.55),transparent)' }}>
-
-                    {/* Top: close + counter */}
                     <div className="flex flex-col items-center gap-1.5">
                         <button onClick={onClose} className="p-2.5 text-white/70 hover:text-white rounded-full transition">
                             <X className="w-5 h-5" />
@@ -469,10 +445,7 @@ function ImageViewer({ images: initImages, initialIndex, onClose, onToggleImageF
                             {idx + 1}<br/><span className="text-white/25">/</span><br/>{imgCount}
                         </span>
                     </div>
-
-                    {/* Middle: action buttons */}
                     <div className="flex flex-col items-center gap-1">
-                        {/* Favorite */}
                         <div className="flex flex-col items-center">
                             <button onClick={toggleFav}
                                 className={`p-2.5 rounded-full transition ${img?.isFavorite ? 'text-red-500' : 'text-white/70 hover:text-white'}`}>
@@ -480,8 +453,6 @@ function ImageViewer({ images: initImages, initialIndex, onClose, onToggleImageF
                             </button>
                             {img?.views > 0 && <span className="text-white/30 text-[9px] -mt-1">{img.views}</span>}
                         </div>
-
-                        {/* Play / slideshow */}
                         <div className="relative">
                             {showTimer && (
                                 <TimerPicker currentTimer={ssTimer}
@@ -494,40 +465,31 @@ function ImageViewer({ images: initImages, initialIndex, onClose, onToggleImageF
                                 {ssPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" fill="currentColor" />}
                             </button>
                         </div>
-
-                        {/* Zoom lock */}
-                        <IBtn onClick={() => setZoomLocked(z => !z)} active={zoomLocked} title={zoomLocked ? 'Unlock zoom' : 'Lock zoom (Ctrl+Wheel to zoom, Wheel to navigate)'}>
+                        <IBtn onClick={() => setZoomLocked(z => !z)} active={zoomLocked}
+                            title={zoomLocked ? 'Unlock zoom' : 'Ctrl+Wheel=zoom · Wheel=next/prev'}>
                             <ZoomIn className={`w-5 h-5 ${zoomLocked ? 'opacity-50' : ''}`} />
                         </IBtn>
-
-                        {/* Reset zoom — only if zoomed */}
                         {zoom !== 1 && (
                             <IBtn onClick={resetView} title="Reset zoom (0)">
                                 <RotateCcw className="w-5 h-5" />
                             </IBtn>
                         )}
-
-                        {/* Lock controls */}
                         <IBtn onClick={() => setLocked(true)} title="Lock controls (L)">
                             <Lock className="w-5 h-5" />
                         </IBtn>
-
-                        {/* Fullscreen */}
                         <IBtn onClick={toggleFS} title="Fullscreen (F)">
                             {isFS ? <Minimize2 className="w-5 h-5" /> : <Maximize2 className="w-5 h-5" />}
                         </IBtn>
                     </div>
-
-                    {/* Bottom: title */}
                     {img?.title && (
-                        <p className="text-white/30 text-[9px] text-center max-w-[36px] break-words leading-tight">
+                        <p className="text-white/30 text-[9px] text-center max-w-9 wrap-break-word leading-tight">
                             {img.title}
                         </p>
                     )}
                 </div>
             </div>
 
-            {/* ── Locked — only unlock button visible ──────────────────────── */}
+            {/* ── Locked overlay ───────────────────────────────────────────── */}
             {locked && (
                 <button onClick={() => { setLocked(false); onActivity(); }}
                     className="absolute top-3 right-3 z-50 p-2.5 bg-amber-500/20 hover:bg-amber-500/40 border border-amber-500/40 text-amber-400 rounded-xl transition"
@@ -540,12 +502,164 @@ function ImageViewer({ images: initImages, initialIndex, onClose, onToggleImageF
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// LAZY IMAGE — renders a placeholder until entering the viewport
+// ─────────────────────────────────────────────────────────────────────────────
+function LazyThumb({ src, alt, className, style }) {
+    const ref   = useRef(null);
+    const [vis, setVis] = useState(false);
+    useEffect(() => {
+        const el = ref.current; if (!el) return;
+        const ob = new IntersectionObserver(([e]) => { if (e.isIntersecting) { setVis(true); ob.disconnect(); } },
+            { rootMargin: '200px' });
+        ob.observe(el);
+        return () => ob.disconnect();
+    }, []);
+    return (
+        <div ref={ref} className={className} style={style}>
+            {vis
+                ? <img src={src} alt={alt} loading="lazy" decoding="async"
+                    className="w-full h-full object-cover transition-opacity duration-300"
+                    style={{ opacity: 1 }} />
+                : <div className="w-full h-full bg-slate-800 animate-pulse" />}
+        </div>
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GRID SIZE CONFIG
+// ─────────────────────────────────────────────────────────────────────────────
+const GRID_SIZES = [
+    { id: 'xl',  label: 'XL',  cols: 'grid-cols-1 sm:grid-cols-2 md:grid-cols-3' },
+    { id: 'lg',  label: 'L',   cols: 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4' },
+    { id: 'md',  label: 'M',   cols: 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5' },
+    { id: 'sm',  label: 'S',   cols: 'grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7' },
+    { id: 'xs',  label: 'XS',  cols: 'grid-cols-4 sm:grid-cols-6 md:grid-cols-7 lg:grid-cols-8 xl:grid-cols-10' },
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SORT OPTIONS
+// ─────────────────────────────────────────────────────────────────────────────
+const SORT_OPTS = [
+    { id: 'order',     label: 'Default order' },
+    { id: 'date_desc', label: 'Newest first' },
+    { id: 'date_asc',  label: 'Oldest first' },
+    { id: 'views',     label: 'Most viewed' },
+    { id: 'fav',       label: 'Favorites first' },
+    { id: 'name',      label: 'Name A→Z' },
+];
+
+function sortImages(imgs, sortBy) {
+    const a = [...imgs];
+    switch (sortBy) {
+        case 'date_desc': return a.sort((x, y) => new Date(y.createdAt) - new Date(x.createdAt));
+        case 'date_asc':  return a.sort((x, y) => new Date(x.createdAt) - new Date(y.createdAt));
+        case 'views':     return a.sort((x, y) => (y.views || 0) - (x.views || 0));
+        case 'fav':       return a.sort((x, y) => (y.isFavorite ? 1 : 0) - (x.isFavorite ? 1 : 0));
+        case 'name':      return a.sort((x, y) => (x.title || '').localeCompare(y.title || ''));
+        default:          return a;
+    }
+}
+
+function groupByDate(imgs) {
+    const groups = {};
+    for (const img of imgs) {
+        const d = img.createdAt ? new Date(img.createdAt) : null;
+        const key = d ? d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : 'Unknown date';
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(img);
+    }
+    // Sort groups newest first
+    return Object.entries(groups).sort(([a], [b]) => new Date(b) - new Date(a));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IMAGE GRID ITEM  (memoised to avoid re-render of all siblings on selection)
+// ─────────────────────────────────────────────────────────────────────────────
+const GridItem = React.memo(function GridItem({ img, i, isSel, selectMode, onClick, onMouseDown, onMouseUp, onMouseLeave, onTouchStart, onTouchEnd, onTouchMove }) {
+    return (
+        <div
+            onClick={() => onClick(i)}
+            onMouseDown={() => onMouseDown(i)}
+            onMouseUp={onMouseUp}
+            onMouseLeave={onMouseLeave}
+            onTouchStart={() => onTouchStart(i)}
+            onTouchEnd={onTouchEnd}
+            onTouchMove={onTouchMove}
+            className={`relative aspect-square rounded-lg overflow-hidden cursor-pointer group border-2 transition-all ${isSel ? 'border-pink-500 ring-2 ring-pink-500/30' : 'border-transparent hover:border-slate-600'}`}
+            style={{ contentVisibility: 'auto', containIntrinsicSize: '0 160px' }}>
+            <LazyThumb src={albumAPI.thumbUrl(img.imagePath)} alt={img.title || ''}
+                className="absolute inset-0 group-hover:scale-105 transition-transform duration-300 overflow-hidden" />
+            <div className={`absolute inset-0 transition-opacity duration-150 ${selectMode ? 'bg-black/20' : 'bg-black/30 opacity-0 group-hover:opacity-100'}`} />
+            {selectMode && (
+                <div className={`absolute top-1.5 left-1.5 w-5 h-5 rounded border-2 flex items-center justify-center transition ${isSel ? 'bg-pink-500 border-pink-500' : 'bg-black/50 border-white'}`}>
+                    {isSel && <span className="text-white text-xs font-bold leading-none">✓</span>}
+                </div>
+            )}
+            {img.isFavorite && !selectMode && (
+                <div className="absolute top-1.5 right-1.5">
+                    <Heart className="w-3.5 h-3.5 text-red-500 drop-shadow" fill="currentColor" />
+                </div>
+            )}
+            {img.views > 0 && !selectMode && (
+                <div className="absolute bottom-1 right-1.5 flex items-center gap-0.5 px-1.5 py-0.5 bg-black/60 text-white text-[10px] rounded opacity-0 group-hover:opacity-100 transition">
+                    <Eye className="w-2.5 h-2.5" /> {img.views}
+                </div>
+            )}
+            {!selectMode && (
+                <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
+                    <Maximize2 className="w-6 h-6 text-white drop-shadow-lg" />
+                </div>
+            )}
+        </div>
+    );
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DROP CONFIRM MODAL
+// ─────────────────────────────────────────────────────────────────────────────
+function DropConfirmModal({ files, onConfirm, onCancel }) {
+    const previews = files.slice(0, 6);
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+            <div className="bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl w-full max-w-sm p-5 space-y-4">
+                <h2 className="text-white font-bold text-base">Upload {files.length} image{files.length !== 1 ? 's' : ''}?</h2>
+
+                {/* Preview grid */}
+                <div className="grid grid-cols-3 gap-1.5">
+                    {previews.map((f, i) => (
+                        <div key={i} className="aspect-square rounded-lg overflow-hidden bg-slate-800">
+                            <img src={URL.createObjectURL(f)} alt="" className="w-full h-full object-cover" />
+                        </div>
+                    ))}
+                    {files.length > 6 && (
+                        <div className="aspect-square rounded-lg bg-slate-800 flex items-center justify-center text-slate-400 text-xs font-semibold">
+                            +{files.length - 6} more
+                        </div>
+                    )}
+                </div>
+
+                <div className="flex gap-2 justify-end">
+                    <button onClick={onCancel}
+                        className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-sm transition">
+                        Cancel
+                    </button>
+                    <button onClick={onConfirm}
+                        className="flex items-center gap-1.5 px-4 py-2 bg-pink-600 hover:bg-pink-500 text-white rounded-lg text-sm font-semibold transition">
+                        <Upload className="w-3.5 h-3.5" /> Upload
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ALBUM DETAIL PAGE
 // ─────────────────────────────────────────────────────────────────────────────
 export default function AlbumDetail() {
     const { id }   = useParams();
     const navigate = useNavigate();
-    const { isAdmin, user } = useAuth();
+    const { isAdmin } = useAuth();
 
     const [album,   setAlbum]   = useState(null);
     const [images,  setImages]  = useState([]);
@@ -553,6 +667,20 @@ export default function AlbumDetail() {
 
     const [selectMode, setSelectMode] = useState(false);
     const [selected,   setSelected]   = useState(new Set());
+    const lastClickIdx  = useRef(null);   // for shift-range select
+    // Track shift key state reliably via global keydown/keyup — e.shiftKey on
+    // synthetic click events can be stale in some browsers/React versions.
+    const shiftHeldRef  = useRef(false);
+    useEffect(() => {
+        const dn = (e) => { if (e.key === 'Shift') shiftHeldRef.current = true;  };
+        const up = (e) => { if (e.key === 'Shift') shiftHeldRef.current = false; };
+        window.addEventListener('keydown', dn);
+        window.addEventListener('keyup',   up);
+        // Clear on blur so release outside window is handled
+        window.addEventListener('blur', () => { shiftHeldRef.current = false; });
+        return () => { window.removeEventListener('keydown', dn); window.removeEventListener('keyup', up); };
+    }, []);
+
     const [viewerOpen,   setViewerOpen]   = useState(false);
     const [viewerImages, setViewerImages] = useState([]);
     const [viewerIndex,  setViewerIndex]  = useState(0);
@@ -562,9 +690,53 @@ export default function AlbumDetail() {
     const [deleting,    setDeleting]    = useState(false);
     const uploadRef = useRef(null);
 
-    // Long-press state
+    // ── Drag-and-drop ──────────────────────────────────────────────────────────
+    const [dragging,    setDragging]    = useState(false);
+    const [dropFiles,   setDropFiles]   = useState(null);   // File[] pending confirm
+    const dragCountRef = useRef(0);     // track nested drag events
+
+    const isImageFiles = (dt) => [...(dt?.items || [])].some(i => i.kind === 'file' && i.type.startsWith('image/'));
+
+    const onDragEnter = useCallback((e) => {
+        e.preventDefault();
+        if (!isAdmin) return;
+        if (isImageFiles(e.dataTransfer)) { dragCountRef.current++; setDragging(true); }
+    }, [isAdmin]);
+
+    const onDragLeave = useCallback((e) => {
+        e.preventDefault();
+        dragCountRef.current--;
+        if (dragCountRef.current <= 0) { dragCountRef.current = 0; setDragging(false); }
+    }, []);
+
+    const onDragOver = useCallback((e) => { e.preventDefault(); }, []);
+
+    const onDrop = useCallback((e) => {
+        e.preventDefault();
+        dragCountRef.current = 0;
+        setDragging(false);
+        if (!isAdmin) return;
+        const files = [...e.dataTransfer.files].filter(f => f.type.startsWith('image/'));
+        if (files.length) setDropFiles(files);
+    }, [isAdmin]);
+
+    // ── View options ───────────────────────────────────────────────────────────
+    const [gridSize,  setGridSize]  = useState('md');   // xl lg md sm xs
+    const [viewMode,  setViewMode]  = useState('normal'); // normal | grouped | sorted
+    const [sortBy,    setSortBy]    = useState('order');
+    const [showOpts,  setShowOpts]  = useState(false);
+    const optsRef = useRef(null);
+
+    // Close options panel on outside click
+    useEffect(() => {
+        if (!showOpts) return;
+        const fn = (e) => { if (!optsRef.current?.contains(e.target)) setShowOpts(false); };
+        document.addEventListener('mousedown', fn);
+        return () => document.removeEventListener('mousedown', fn);
+    }, [showOpts]);
+
+    // Long-press
     const longPressRef = useRef(null);
-    const longPressIdx = useRef(null);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -578,41 +750,60 @@ export default function AlbumDetail() {
 
     useEffect(() => { load(); }, [load]);
 
-    // ── Long-press to enter select mode ───────────────────────────────────────
+    // ── Derived sorted/grouped images ──────────────────────────────────────────
+    const displayImages = useMemo(() => sortImages(images, viewMode === 'sorted' ? sortBy : 'order'), [images, viewMode, sortBy]);
+    const groupedImages = useMemo(() => viewMode === 'grouped' ? groupByDate(displayImages) : [], [viewMode, displayImages]);
+
+    // ── Long-press ─────────────────────────────────────────────────────────────
     const startLongPress = (i) => {
-        longPressIdx.current = i;
         longPressRef.current = setTimeout(() => {
             if (!selectMode) setSelectMode(true);
-            setSelected(new Set([images[i]._id]));
+            setSelected(new Set([displayImages[i]._id]));
+            lastClickIdx.current = i;
         }, 500);
     };
     const cancelLongPress = () => clearTimeout(longPressRef.current);
 
     // ── Select helpers ─────────────────────────────────────────────────────────
-    const toggleSelect  = (imgId) => setSelected(prev => { const n = new Set(prev); n.has(imgId) ? n.delete(imgId) : n.add(imgId); return n; });
-    const selectAll     = () => setSelected(new Set(images.map(i => i._id)));
-    const deselectAll   = () => setSelected(new Set());
-    const exitSelect    = () => { setSelectMode(false); setSelected(new Set()); };
+    const toggleSelect = useCallback((imgId, idx, shiftHeld) => {
+        setSelected(prev => {
+            const n = new Set(prev);
+            if (shiftHeld && lastClickIdx.current !== null) {
+                // Range select from lastClickIdx to idx
+                const lo = Math.min(lastClickIdx.current, idx);
+                const hi = Math.max(lastClickIdx.current, idx);
+                for (let k = lo; k <= hi; k++) n.add(displayImages[k]._id);
+                return n;
+            }
+            n.has(imgId) ? n.delete(imgId) : n.add(imgId);
+            return n;
+        });
+        lastClickIdx.current = idx;
+    }, [displayImages]);
+
+    const selectAll   = () => { setSelected(new Set(displayImages.map(i => i._id))); lastClickIdx.current = null; };
+    const deselectAll = () => { setSelected(new Set()); lastClickIdx.current = null; };
+    const exitSelect  = () => { setSelectMode(false); setSelected(new Set()); lastClickIdx.current = null; };
 
     // ── Open viewer ────────────────────────────────────────────────────────────
     const openViewerFiltered = (startAt = 0) => {
         if (selected.size > 0) {
-            setViewerImages(images.filter(img => selected.has(img._id)));
+            setViewerImages(displayImages.filter(img => selected.has(img._id)));
             setViewerIndex(0);
         } else {
-            setViewerImages(images);
+            setViewerImages(displayImages);
             setViewerIndex(startAt);
         }
         setViewerOpen(true);
         if (selectMode) exitSelect();
     };
 
-    const openViewer = (i) => {
-        if (selectMode) { toggleSelect(images[i]._id); return; }
-        setViewerImages(images);
+    const handleImgClick = useCallback((i) => {
+        if (selectMode) { toggleSelect(displayImages[i]._id, i, shiftHeldRef.current); return; }
+        setViewerImages(displayImages);
         setViewerIndex(i);
         setViewerOpen(true);
-    };
+    }, [selectMode, displayImages, toggleSelect]);
 
     const handleImageFavToggle = useCallback((imageId, isFavorite) => {
         setImages(prev => prev.map(img => img._id === imageId ? { ...img, isFavorite } : img));
@@ -639,15 +830,11 @@ export default function AlbumDetail() {
         catch { toast.error('Failed to delete'); }
     };
 
-    // ── Delete whole album ─────────────────────────────────────────────────────
     const handleDeleteAlbum = async () => {
         if (!window.confirm(`Delete the album "${album?.title}" and ALL its images? This cannot be undone.`)) return;
         setDeleting(true);
-        try {
-            await albumAPI.deleteAlbum(id);
-            toast.success('Album deleted');
-            navigate('/albums');
-        } catch { toast.error('Failed to delete album'); setDeleting(false); }
+        try { await albumAPI.deleteAlbum(id); toast.success('Album deleted'); navigate('/'); }
+        catch { toast.error('Failed to delete album'); setDeleting(false); }
     };
 
     const handleToggleAlbumFav = async () => {
@@ -657,6 +844,9 @@ export default function AlbumDetail() {
         } catch { toast.error('Failed to update favorite'); }
     };
 
+    // ── Grid column class ──────────────────────────────────────────────────────
+    const colsCls = GRID_SIZES.find(g => g.id === gridSize)?.cols ?? GRID_SIZES[2].cols;
+
     if (loading) return (
         <div className="min-h-screen bg-slate-950 flex items-center justify-center">
             <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-pink-500" />
@@ -665,12 +855,53 @@ export default function AlbumDetail() {
 
     const hasImages = images.length > 0;
 
+    // ── Shared grid item event handlers (stable refs for memo) ─────────────────
+    const gridHandlers = {
+        onClick:      (i) => handleImgClick(i),
+        onMouseDown:  (i)    => startLongPress(i),
+        onMouseUp:    ()     => cancelLongPress(),
+        onMouseLeave: ()     => cancelLongPress(),
+        onTouchStart: (i)    => startLongPress(i),
+        onTouchEnd:   ()     => cancelLongPress(),
+        onTouchMove:  ()     => cancelLongPress(),
+    };
+
+    // ── Render a flat grid of images ───────────────────────────────────────────
+    const renderGrid = (imgs, baseOffset = 0) => (
+        <div className={`grid ${colsCls} gap-1.5`}>
+            {imgs.map((img, li) => {
+                const i = baseOffset + li;
+                return (
+                    <GridItem key={img._id} img={img} i={i}
+                        isSel={selected.has(img._id)} selectMode={selectMode}
+                        onClick={handleImgClick}
+                        onMouseDown={gridHandlers.onMouseDown}
+                        onMouseUp={gridHandlers.onMouseUp}
+                        onMouseLeave={gridHandlers.onMouseLeave}
+                        onTouchStart={gridHandlers.onTouchStart}
+                        onTouchEnd={gridHandlers.onTouchEnd}
+                        onTouchMove={gridHandlers.onTouchMove} />
+                );
+            })}
+        </div>
+    );
+
     return (
-        <div className="min-h-screen bg-slate-950">
+        <div className="min-h-screen bg-slate-950 relative"
+            onDragEnter={onDragEnter}
+            onDragLeave={onDragLeave}
+            onDragOver={onDragOver}
+            onDrop={onDrop}>
+
+            {/* Drop overlay */}
+            {dragging && (
+                <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-pink-900/60 backdrop-blur-sm border-4 border-dashed border-pink-400 pointer-events-none">
+                    <Upload className="w-16 h-16 text-pink-300 mb-3" />
+                    <p className="text-white text-xl font-bold">Drop images to upload</p>
+                </div>
+            )}
             {/* ── Top Bar ───────────────────────────────────────────────────── */}
             <AppHeader
-                onBack={() => navigate(-1)}
-                title={album?.title}
                 actions={isAdmin && (
                     <div className="flex items-center gap-1.5">
                         <button onClick={() => setShowEdit(true)}
@@ -684,7 +915,7 @@ export default function AlbumDetail() {
                                 : <><Upload className="w-3.5 h-3.5" /> Add</>}
                         </button>
                         <button onClick={handleDeleteAlbum} disabled={deleting}
-                            className="flex items-center gap-1 px-2.5 py-1.5 bg-red-700 hover:bg-red-600 disabled:opacity-50 text-white rounded-lg text-xs font-medium transition" title="Delete entire album">
+                            className="flex items-center gap-1 px-2.5 py-1.5 bg-red-700 hover:bg-red-600 disabled:opacity-50 text-white rounded-lg text-xs font-medium transition">
                             {deleting ? <div className="w-3 h-3 border-b border-white rounded-full animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
                             <span className="hidden sm:inline">Delete Album</span>
                         </button>
@@ -700,13 +931,13 @@ export default function AlbumDetail() {
                     {(album?.coverPath || !hasImages) && (
                         <div className="shrink-0 w-24 h-24 sm:w-32 sm:h-32 rounded-xl overflow-hidden bg-slate-800 border border-slate-700">
                             {album?.coverPath
-                                ? <img src={albumAPI.imageUrl(album.coverPath)} alt={album?.title} className="w-full h-full object-cover" />
+                                ? <img src={albumAPI.imageUrl(album.coverPath)} alt={album?.title} loading="lazy" decoding="async" className="w-full h-full object-cover" />
                                 : <div className="w-full h-full flex items-center justify-center"><Images className="w-8 h-8 text-slate-600" /></div>}
                         </div>
                     )}
                     <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap mb-1.5">
-                            <span className="px-2 py-0.5 bg-pink-600/20 text-pink-400 text-xs font-bold rounded uppercase">Album</span>
+                            <span className="text-pink-400 text-lg font-bold rounded uppercase">{album?.title || 'Untitled'}</span>
                             {album?.year && <span className="text-slate-500 text-sm">{album.year}</span>}
                         </div>
                         {album?.description && <p className="text-slate-400 text-sm mb-2">{album.description}</p>}
@@ -748,22 +979,37 @@ export default function AlbumDetail() {
                     selectMode ? (
                         <div className="flex items-center gap-2 flex-wrap p-3 bg-slate-800/70 border border-slate-700 rounded-xl">
                             <span className="text-white text-sm font-medium">{selected.size} selected</span>
-                            <button onClick={selectAll}   className="px-2.5 py-1.5 bg-slate-700 hover:bg-slate-600 text-white text-xs rounded-lg transition">All ({images.length})</button>
-                            <button onClick={deselectAll} className="px-2.5 py-1.5 bg-slate-700 hover:bg-slate-600 text-white text-xs rounded-lg transition">None</button>
+                            <button onClick={selectAll}
+                                className="px-2.5 py-1.5 bg-slate-700 hover:bg-slate-600 text-white text-xs rounded-lg transition">All ({displayImages.length})</button>
+                            <button onClick={deselectAll}
+                                className="px-2.5 py-1.5 bg-slate-700 hover:bg-slate-600 text-white text-xs rounded-lg transition">None</button>
                             <div className="flex-1" />
-                            <button onClick={() => openViewerFiltered()}
-                                className="flex items-center gap-1.5 px-3 py-1.5 bg-pink-600 hover:bg-pink-500 text-white text-xs rounded-lg font-medium transition">
+                            <button 
+                                onClick={() => openViewerFiltered()}
+                                className="flex items-center gap-1.5 px-3 py-1.5 bg-pink-600 hover:bg-pink-500 text-white text-xs rounded-lg font-medium transition"
+                            >
                                 <Play className="w-3 h-3" fill="currentColor" />
-                                {selected.size > 0 ? `View (${selected.size})` : 'View All'}
+                                <span className="hidden sm:inline">
+                                    {selected.size > 0 ? `View (${selected.size})` : 'View All'}
+                                </span>
                             </button>
-                            <button onClick={() => albumAPI.downloadAlbum(id, selected.size ? [...selected] : null)} disabled={!selected.size}
-                                className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs rounded-lg font-medium transition">
-                                <Download className="w-3 h-3" />{selected.size > 1 ? `ZIP (${selected.size})` : 'Download'}
+                            <button 
+                                onClick={() => albumAPI.downloadAlbum(id, selected.size ? [...selected] : null)} 
+                                disabled={!selected.size}
+                                className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs rounded-lg font-medium transition"
+                            >
+                                <Download className="w-3 h-3" />
+                                <span className="hidden sm:inline">
+                                    {selected.size > 1 ? `ZIP (${selected.size})` : 'Download'}
+                                </span>
                             </button>
                             {isAdmin && (
                                 <button onClick={handleDeleteSelected} disabled={!selected.size}
                                     className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white text-xs rounded-lg font-medium transition">
-                                    <Trash2 className="w-3 h-3" /> Delete
+                                    <Trash2 className="w-3 h-3" />
+                                    <span className="hidden sm:inline">
+                                        Delete
+                                    </span>
                                 </button>
                             )}
                             <button onClick={exitSelect} className="p-1.5 text-slate-400 hover:text-white rounded-lg transition"><X className="w-4 h-4" /></button>
@@ -772,67 +1018,129 @@ export default function AlbumDetail() {
                         <div className="flex items-center gap-2 flex-wrap">
                             <button onClick={() => setSelectMode(true)}
                                 className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 border border-slate-700 text-slate-300 hover:text-white text-sm rounded-lg transition">
-                                <CheckSquare className="w-4 h-4" /> Select
+                                <CheckSquare className="w-4 h-4" />
+                                <span className="hidden sm:inline">
+                                    Select
+                                </span>
                             </button>
                             <button onClick={() => albumAPI.downloadAlbum(id)}
                                 className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 border border-slate-700 text-slate-300 hover:text-white text-sm rounded-lg transition">
-                                <Download className="w-4 h-4" /> Download All
+                                <Download className="w-4 h-4" />
+                                <span className="hidden sm:inline">
+                                    Download All
+                                </span>
                             </button>
                             <button onClick={() => openViewerFiltered(0)}
                                 className="flex items-center gap-1.5 px-3 py-1.5 bg-pink-600 hover:bg-pink-500 text-white text-sm rounded-lg font-medium transition">
-                                <Play className="w-4 h-4" fill="currentColor" /> View All
+                                <Play className="w-4 h-4" fill="currentColor" />
+                                <span className="hidden sm:inline">
+                                    View All
+                                </span>
                             </button>
+
+                            <div className="flex-1" />
+
+                            {/* ── View options panel ──────────────────────── */}
+                            <div className="relative" ref={optsRef}>
+                                <button onClick={() => setShowOpts(o => !o)}
+                                    className={`flex items-center gap-1.5 px-3 py-1.5 border text-sm rounded-lg transition ${showOpts ? 'bg-slate-700 border-slate-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-300 hover:text-white'}`}>
+                                    <SlidersHorizontal className="w-4 h-4" />
+                                    <span className="hidden sm:inline">
+                                        Options
+                                    </span>
+                                </button>
+
+                                {showOpts && (
+                                    <div className="absolute right-0 top-full mt-2 z-40 bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl p-4 w-72 space-y-4">
+                                        {/* Grid size */}
+                                        <div>
+                                            <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                                                <LayoutGrid className="w-3.5 h-3.5" /> Layout size
+                                            </p>
+                                            <div className="flex gap-1.5">
+                                                {GRID_SIZES.map(g => (
+                                                    <button key={g.id} onClick={() => setGridSize(g.id)}
+                                                        className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition ${gridSize === g.id ? 'bg-pink-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700'}`}>
+                                                        {g.label}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+
+                                        {/* View mode */}
+                                        <div>
+                                            <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                                                <AlignJustify className="w-3.5 h-3.5" /> View mode
+                                            </p>
+                                            <div className="flex flex-col gap-1">
+                                                {[
+                                                    { id: 'normal',  label: 'Normal',          icon: <LayoutGrid className="w-3.5 h-3.5" /> },
+                                                    { id: 'grouped', label: 'Grouped by date',  icon: <Calendar className="w-3.5 h-3.5" /> },
+                                                    { id: 'sorted',  label: 'Sorted',           icon: <ArrowUpDown className="w-3.5 h-3.5" /> },
+                                                ].map(m => (
+                                                    <button key={m.id} onClick={() => setViewMode(m.id)}
+                                                        className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs transition ${viewMode === m.id ? 'bg-pink-600 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>
+                                                        {m.icon} {m.label}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+
+                                        {/* Sort options — only visible in sorted mode */}
+                                        {viewMode === 'sorted' && (
+                                            <div>
+                                                <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                                                    <Star className="w-3.5 h-3.5" /> Sort by
+                                                </p>
+                                                <div className="flex flex-col gap-1">
+                                                    {SORT_OPTS.map(o => (
+                                                        <button key={o.id} onClick={() => setSortBy(o.id)}
+                                                            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs transition ${sortBy === o.id ? 'bg-slate-600 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
+                                                            {sortBy === o.id && <span className="text-pink-400">✓</span>}
+                                                            {o.label}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     )
                 )}
 
-                {/* Image Grid */}
+                {/* Hint */}
                 {hasImages && (
-                    <>
-                        {selectMode && <p className="text-slate-500 text-xs">Long-press any image to enter select mode · tap to toggle</p>}
-                        {!selectMode && <p className="text-slate-500 text-xs">Long-press to select · tap to view</p>}
-                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-1.5">
-                            {images.map((img, i) => {
-                                const isSel = selected.has(img._id);
-                                return (
-                                    <div key={img._id}
-                                        onClick={() => openViewer(i)}
-                                        onMouseDown={() => startLongPress(i)}
-                                        onMouseUp={cancelLongPress}
-                                        onMouseLeave={cancelLongPress}
-                                        onTouchStart={() => startLongPress(i)}
-                                        onTouchEnd={cancelLongPress}
-                                        onTouchMove={cancelLongPress}
-                                        className={`relative aspect-square rounded-lg overflow-hidden cursor-pointer group border-2 transition-all ${isSel ? 'border-pink-500 ring-2 ring-pink-500/30' : 'border-transparent hover:border-slate-600'}`}>
-                                        <img src={albumAPI.imageUrl(img.imagePath)} alt={img.title || ''} loading="lazy"
-                                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
-                                        <div className={`absolute inset-0 transition-opacity duration-150 ${selectMode ? 'bg-black/20' : 'bg-black/30 opacity-0 group-hover:opacity-100'}`} />
-                                        {selectMode && (
-                                            <div className={`absolute top-1.5 left-1.5 w-5 h-5 rounded border-2 flex items-center justify-center transition ${isSel ? 'bg-pink-500 border-pink-500' : 'bg-black/50 border-white'}`}>
-                                                {isSel && <span className="text-white text-xs font-bold leading-none">✓</span>}
-                                            </div>
-                                        )}
-                                        {img.isFavorite && !selectMode && (
-                                            <div className="absolute top-1.5 right-1.5">
-                                                <Heart className="w-3.5 h-3.5 text-red-500 drop-shadow" fill="currentColor" />
-                                            </div>
-                                        )}
-                                        {img.views > 0 && !selectMode && (
-                                            <div className="absolute bottom-1 right-1.5 flex items-center gap-0.5 px-1.5 py-0.5 bg-black/60 text-white text-[10px] rounded opacity-0 group-hover:opacity-100 transition">
-                                                <Eye className="w-2.5 h-2.5" /> {img.views}
-                                            </div>
-                                        )}
-                                        {!selectMode && (
-                                            <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
-                                                <Maximize2 className="w-6 h-6 text-white drop-shadow-lg" />
-                                            </div>
-                                        )}
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    </>
+                    <p className="text-slate-600 text-xs">
+                        {selectMode
+                            ? 'Tap to toggle · Shift+click to range-select · Long-press on mobile'
+                            : 'Tap to view · Long-press or click Select to multi-select'}
+                    </p>
                 )}
+
+                {/* Image Grid — normal or sorted */}
+                {hasImages && viewMode !== 'grouped' && renderGrid(displayImages, 0)}
+
+                {/* Image Grid — grouped by date */}
+                {hasImages && viewMode === 'grouped' && (() => {
+                    let offset = 0;
+                    return groupedImages.map(([dateLabel, imgs]) => {
+                        const base = offset;
+                        offset += imgs.length;
+                        return (
+                            <div key={dateLabel} className="space-y-2">
+                                <div className="flex items-center gap-2">
+                                    <Calendar className="w-3.5 h-3.5 text-slate-500" />
+                                    <span className="text-slate-400 text-sm font-medium">{dateLabel}</span>
+                                    <span className="text-slate-600 text-xs">({imgs.length})</span>
+                                    <div className="flex-1 h-px bg-slate-800" />
+                                </div>
+                                {renderGrid(imgs, base)}
+                            </div>
+                        );
+                    });
+                })()}
             </div>
 
             {viewerOpen && (
@@ -842,6 +1150,12 @@ export default function AlbumDetail() {
             )}
             {showEdit && (
                 <AlbumFormModal album={album} onSaved={() => { setShowEdit(false); load(); }} onClose={() => setShowEdit(false)} />
+            )}
+            {dropFiles && (
+                <DropConfirmModal
+                    files={dropFiles}
+                    onConfirm={() => { handleUpload(dropFiles); setDropFiles(null); }}
+                    onCancel={() => setDropFiles(null)} />
             )}
         </div>
     );
