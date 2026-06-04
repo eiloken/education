@@ -1,5 +1,5 @@
 import React, { forwardRef, useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { generalAPI, seriesAPI, videoAPI, historyAPI } from "../../api/api";
 import toast from "react-hot-toast";
 import VideoPlayer from "./VideoPlayer";
@@ -419,8 +419,8 @@ export function SeriesDetail() {
                                                     </IconBtn>
                                                 </>
                                             )}
-                                            <a
-                                                href={videoAPI.getDownloadUrl(currentEpisode._id)}
+                                            <Link
+                                                to={videoAPI.getDownloadUrl(currentEpisode._id)}
                                                 download
                                                 onClick={e => e.stopPropagation()}
                                                 title="Download episode"
@@ -428,7 +428,7 @@ export function SeriesDetail() {
                                                         hover:text-white transition"
                                             >
                                                 <Download className="w-4 h-4" />
-                                            </a>
+                                            </Link>
                                             <button
                                                 onClick={handleToggleFavoriteVideo}
                                                 title={currentEpisode.isFavorite ? 'Remove from favorites' : 'Add to favorites'}

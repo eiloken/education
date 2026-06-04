@@ -10,7 +10,7 @@ import {
 import SeriesCard from "./series/SeriesCard.jsx";
 import FilterSidebar, { cycleItem, filtersToParams, paramsToFilters } from "./FilterSidebar";
 import Pagination from "./Pagination";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import Dashboard from "./Dashboard";
 import AdminRequests from "./auth/AdminRequests.jsx";
 import UserProfile from "./auth/UserProfile.jsx";
@@ -92,7 +92,7 @@ function HomeAlbumCard({ album, onToggleFavorite }) {
     const { title, imageCount = 0, isFavorite, mosaicPath, coverPath } = album;
     const cover = mosaicPath || coverPath;
     return (
-        <a href={`/albums/${album._id}`}
+        <Link to={`/albums/${album._id}`}
             className="relative bg-slate-900 rounded-xl overflow-hidden border border-slate-800 hover:border-slate-600 transition cursor-pointer group flex flex-col h-full">
             <div className="relative aspect-video bg-slate-800 overflow-hidden flex-none">
                 <AlbumCoverMosaic coverPath={cover} title={title} />
@@ -114,12 +114,12 @@ function HomeAlbumCard({ album, onToggleFavorite }) {
                     {title}
                 </h3>
             </div>
-        </a>
+        </Link>
     );
 }
 
 // ─── HomeSection (series) ─────────────────────────────────────────────────────
-function HomeSection({ section, items, cardProps, handleShowAll, handleToggleFavoriteSeries }) {
+function HomeSection({ section, items, cardProps, sectionAddress, handleToggleFavoriteSeries }) {
     const rowRef = useRef(null);
     const [canLeft,  setCanLeft]  = useState(false);
     const [canRight, setCanRight] = useState(false);
@@ -138,10 +138,12 @@ function HomeSection({ section, items, cardProps, handleShowAll, handleToggleFav
                         className={`px-3 py-2 rounded-lg transition hidden sm:flex ${canLeft ? 'text-slate-400 hover:text-slate-300 hover:bg-red-800/30' : 'text-slate-600 cursor-not-allowed'}`}>
                         <ChevronLeft className="w-3 h-3" />
                     </button>
-                    <button onClick={() => handleShowAll(section)}
-                        className="px-3 py-2 items-center justify-center rounded-lg text-slate-400 hover:text-slate-300 hover:bg-red-800/30 transition">
+                    <Link 
+                        to={sectionAddress}
+                        className="px-3 py-2 items-center justify-center rounded-lg text-slate-400 hover:text-slate-300 hover:bg-red-800/30 transition"
+                    >
                         Show all
-                    </button>
+                    </Link>
                     <button disabled={!canRight} onClick={() => rowRef.current?.scrollRight()}
                         className={`px-3 py-2 rounded-lg transition hidden sm:flex ${canRight ? 'text-slate-400 hover:text-slate-300 hover:bg-red-800/30' : 'text-slate-600 cursor-not-allowed'}`}>
                         <ChevronRight className="w-3 h-3" />
@@ -179,9 +181,9 @@ function AlbumSection({ section, items, handleToggleFavoriteAlbum }) {
                         className={`px-3 py-2 rounded-lg transition hidden sm:flex ${canLeft ? 'text-slate-400 hover:text-slate-300 hover:bg-pink-800/30' : 'text-slate-600 cursor-not-allowed'}`}>
                         <ChevronLeft className="w-3 h-3" />
                     </button>
-                    <a href="/?ct=albums&mode=filtered" className="px-3 py-2 rounded-lg text-slate-400 hover:text-slate-300 hover:bg-pink-800/30 transition text-sm">
+                    <Link to="/filtered?ct=albums" className="px-3 py-2 rounded-lg text-slate-400 hover:text-slate-300 hover:bg-pink-800/30 transition text-sm">
                         Show all
-                    </a>
+                    </Link>
                     <button disabled={!canRight} onClick={() => rowRef.current?.scrollRight()}
                         className={`px-3 py-2 rounded-lg transition hidden sm:flex ${canRight ? 'text-slate-400 hover:text-slate-300 hover:bg-pink-800/30' : 'text-slate-600 cursor-not-allowed'}`}>
                         <ChevronRight className="w-3 h-3" />
@@ -284,6 +286,7 @@ const CT_TABS = [
 // ─── Home ─────────────────────────────────────────────────────────────────────
 function Home() {
     const navigate = useNavigate();
+    const { mode: modeParam, section, seriesPage: seriesPageParam } = useParams();
     const { user, loading: authLoading, isAdmin } = useAuth();
     useActivityPing();
 
@@ -295,28 +298,29 @@ function Home() {
     const [albumSections,  setAlbumSections]  = useState({});
     const [albumSectLoading, setAlbumSectLoading] = useState(true);
 
+    // ── Search params are used only for filter state ──────────────────────────
     const [searchParams, setSearchParams] = useSearchParams();
 
-    const homeMode       = searchParams.get('mode')    || 'home';
-    const detailSectionId= searchParams.get('section');
-    const detailSection  = SECTIONS.find(s => s.id === detailSectionId) || null;
-    const seriesPage     = parseInt(searchParams.get('seriesPage') || '1', 10);
-    const viewParam      = searchParams.get('view');
-    const adminView      = isAdmin && ADMIN_MODES.some(m => m.value === viewParam) ? viewParam : null;
+    // ── Derive route state from path params ───────────────────────────────────
+    // Admin views (/dashboard, /requests) are top-level modes
+    const adminView = isAdmin && ADMIN_MODES.some(m => m.value === modeParam) ? modeParam : null;
+    const homeMode  = adminView ? 'home' : (modeParam || 'home');
 
+    // In detail mode the section id comes from the :section path param
+    const detailSectionId = homeMode === 'detail' ? section : null;
+    const detailSection   = SECTIONS.find(s => s.id === detailSectionId) || null;
+
+    // Page: path param for detail mode, search param for filtered mode
+    const seriesPage = homeMode === 'detail'
+        ? parseInt(seriesPageParam || '1', 10)
+        : parseInt(searchParams.get('seriesPage') || '1', 10);
+
+    // ── Filters come from search params only ──────────────────────────────────
     const filtersKey = searchParams.toString();
     // eslint-disable-next-line react-hooks/exhaustive-deps
     const filters = useMemo(() => paramsToFilters(searchParams), [filtersKey]);
 
     const contentType = filters.contentType || 'all';
-
-    const updateParams = useCallback((updates) => {
-        setSearchParams(prev => {
-            const next = new URLSearchParams(prev);
-            Object.entries(updates).forEach(([k, v]) => v == null ? next.delete(k) : next.set(k, String(v)));
-            return next;
-        }, { replace: false });
-    }, [setSearchParams]);
 
     // ── Data states ────────────────────────────────────────────────────────────
     const [seriesList,      setSeriesList]      = useState([]);
@@ -470,23 +474,21 @@ function Home() {
         return () => window.removeEventListener('scroll', handler);
     }, []);
 
-    // ── Commit search from header box ─────────────────────────────────────────
-    const FILTER_KEYS = ['q','tags','txc','stu','sxc','act','axc','chr','cxc','yr','fav','fm','sort','ord','dur','hls','ct'];
+    // ── Build search params string from a filters object ─────────────────────
+    const buildFilterSearch = useCallback((f) => {
+        const fp = filtersToParams(f);
+        const params = new URLSearchParams();
+        Object.entries(fp).forEach(([k, v]) => { if (v != null) params.set(k, v); });
+        return params;
+    }, []);
 
+    // ── Commit search from header box ─────────────────────────────────────────
     const commitSearch = useCallback((term) => {
         const nf = { ...filters, search: term };
-        const fp = filtersToParams(nf);
-        setSearchParams(prev => {
-            const next = new URLSearchParams(prev);
-            FILTER_KEYS.forEach(k => next.delete(k));
-            Object.entries(fp).forEach(([k, v]) => { if (v != null) next.set(k, v); });
-            const nextMode = hasActiveFilters(nf) ? 'filtered' : 'home';
-            next.set('mode', nextMode);
-            next.set('seriesPage', '1');
-            if (nextMode !== 'detail') next.delete('section');
-            return next;
-        }, { replace: false });
-    }, [filters, setSearchParams, hasActiveFilters]);
+        const nextMode = hasActiveFilters(nf) ? 'filtered' : 'home';
+        const params = buildFilterSearch(nf);
+        navigate({ pathname: `/${nextMode}`, search: params.toString() });
+    }, [filters, navigate, hasActiveFilters, buildFilterSearch]);
 
     // ── Favorite toggles ──────────────────────────────────────────────────────
     const applyFavToggle = (id, isFavorite) => {
@@ -543,16 +545,13 @@ function Home() {
 
     // ── Filter change ─────────────────────────────────────────────────────────
     const handleFilterChange = (newFilters) => {
-        const fp = filtersToParams(newFilters);
-        setSearchParams(prev => {
-            const next = new URLSearchParams(prev);
-            FILTER_KEYS.forEach(k => next.delete(k));
-            Object.entries(fp).forEach(([k, v]) => { if (v != null) next.set(k, v); });
-            next.set('mode', hasActiveFilters(newFilters) ? 'filtered' : 'home');
-            next.delete('section');
-            next.set('seriesPage', '1');
-            return next;
-        }, { replace: false });
+        const nextMode = hasActiveFilters(newFilters) ? 'filtered' : 'home';
+        const params = buildFilterSearch(newFilters);
+        if (nextMode !== homeMode) {
+            navigate({ pathname: `/${nextMode}`, search: params.toString() });
+        } else {
+            setSearchParams(params);
+        }
         setSearchTerm(newFilters.search || '');
     };
 
@@ -576,8 +575,18 @@ function Home() {
         handleFilterChange(updated);
     };
 
-    const handleShowAll = (section) => {
-        updateParams({ mode: 'detail', section: section.id, seriesPage: '1' });
+    // Pagination helpers
+    const handleDetailPageChange = (p) => {
+        navigate(`/detail/${detailSectionId}/${p}`);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+
+    const handleFilteredPageChange = (p) => {
+        setSearchParams(prev => {
+            const next = new URLSearchParams(prev);
+            next.set('seriesPage', String(p));
+            return next;
+        });
         window.scrollTo({ top: 0, behavior: 'smooth' });
     };
 
@@ -627,9 +636,10 @@ function Home() {
             <header className="sticky top-0 z-30 bg-slate-950/95 backdrop-blur-sm border-b border-slate-800">
                 <div className="mx-auto px-3 sm:px-4 pt-3 pb-2">
                     <div className="flex items-center justify-between gap-2">
-                        <a className="text-2xl sm:text-3xl font-bold text-red-500 cursor-pointer hover:text-red-400 transition shrink-0" href="/">
+                        <Link to="/"
+                            className="text-2xl sm:text-3xl font-bold text-red-500 cursor-pointer hover:text-red-400 transition shrink-0">
                             VIBEFLIX
-                        </a>
+                        </Link>
                         <div className="flex items-center gap-1.5 sm:gap-2 justify-end">
                             {!isAdminView && (
                                 <>
@@ -671,10 +681,10 @@ function Home() {
                                     <div className="flex flex-wrap gap-1 mt-1 max-h-20 overflow-y-auto">
                                         {filters.search        && <FilterPill label={`"${filters.search}"`}    onRemove={() => handleRemoveFilter('search')}         color="slate" />}
                                         {filters.contentType && filters.contentType !== 'all' && <FilterPill label={`Type: ${filters.contentType}`} onRemove={() => handleRemoveFilter('contentType')} color="blue" />}
-                                        {filters.favorite      && <FilterPill label="❤ Favorites"              onRemove={() => handleRemoveFilter('favorite')}       color="red"   />}
+                                        {filters.favorite      && <FilterPill label="Favorites"              onRemove={() => handleRemoveFilter('favorite')}       color="red"   />}
                                         {filters.year          && <FilterPill label={`Year: ${filters.year}`}  onRemove={() => handleRemoveFilter('year')}           color="green" />}
-                                        {filters.durationFilter && <FilterPill label={`⏱ ${filters.durationFilter}`} onRemove={() => handleRemoveFilter('durationFilter')} color="green" />}
-                                        {filters.hlsFilter      && <FilterPill label={filters.hlsFilter === 'transcoded' ? '✅ Transcoded' : '⚡ Not transcoded'} onRemove={() => handleRemoveFilter('hlsFilter')} color="green" />}
+                                        {filters.durationFilter && <FilterPill label={`${filters.durationFilter}`} onRemove={() => handleRemoveFilter('durationFilter')} color="green" />}
+                                        {filters.hlsFilter      && <FilterPill label={filters.hlsFilter === 'transcoded' ? 'Transcoded' : 'Not transcoded'} onRemove={() => handleRemoveFilter('hlsFilter')} color="green" />}
                                         {['studios','actors','characters','tags'].map(field => (
                                             <Fragment key={field}>
                                                 {(filters[field] || []).map(v => <FilterPill key={`inc-${v}`} label={`✓ ${v}`} onRemove={() => handleRemoveFilter(field, v)} color="green" />)}
@@ -694,8 +704,9 @@ function Home() {
                 {isAdmin && homeMode !== 'detail' && homeMode !== 'filtered' && (
                     <div className="flex-1 flex gap-2 items-center justify-between mb-4">
                         <div className="flex gap-1 bg-slate-900 p-1 rounded-lg shrink-0">
+                            {/* Home tab */}
                             <button
-                                onClick={() => updateParams({ view: null, mode: 'home', section: null, seriesPage: '1' })}
+                                onClick={() => navigate('/')}
                                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition ${
                                     !adminView ? 'bg-red-500 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800'
                                 }`}
@@ -703,9 +714,10 @@ function Home() {
                                 <Layers className="w-4 h-4" />
                                 <span className="hidden md:block text-sm">Home</span>
                             </button>
+                            {/* Admin mode tabs */}
                             {ADMIN_MODES.map(({ value, label, icon: Icon }) => (
                                 <button key={value}
-                                    onClick={() => updateParams({ view: value })}
+                                    onClick={() => navigate(`/${value}`)}
                                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition ${
                                         adminView === value ? 'bg-red-500 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800'
                                     }`}
@@ -718,13 +730,13 @@ function Home() {
 
                         {!isAdminView && (
                             <div className="flex items-center gap-1.5 p-1 rounded-lg bg-slate-900">
-                                <button
-                                    onClick={() => navigate('/upload')}
+                                <Link
+                                    to="/upload"
                                     className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500 hover:bg-red-600 text-white rounded-lg transition"
                                 >
                                     <Plus className="w-4 h-4" />
                                     <span className="hidden md:inline text-sm">Upload Video</span>
-                                </button>
+                                </Link>
                                 <button
                                     onClick={() => setShowAlbumForm(true)}
                                     className="flex items-center gap-1.5 px-3 py-1.5 bg-pink-600 hover:bg-pink-500 text-white rounded-lg transition"
@@ -769,7 +781,7 @@ function Home() {
                                             key={section.id}
                                             section={section}
                                             items={sectionsData[section.id] || []}
-                                            handleShowAll={handleShowAll}
+                                            sectionAddress={`/detail/${section.id}`}
                                             handleToggleFavoriteSeries={handleToggleFavoriteSeries}
                                             cardProps={cardProps}
                                         />
@@ -804,7 +816,7 @@ function Home() {
                                                     ))}
                                                 </ContentGrid>
                                                 <Pagination currentPage={seriesPage} totalPages={seriesTotalPages}
-                                                    onPageChange={p => { updateParams({ seriesPage: String(p) }); window.scrollTo({ top: 0, behavior: 'smooth' }); }} />
+                                                    onPageChange={handleDetailPageChange} />
                                             </>
                                         )}
                                     </>
@@ -854,7 +866,7 @@ function Home() {
                                                     ))}
                                                 </ContentGrid>
                                                 <Pagination currentPage={seriesPage} totalPages={videoTotalPages}
-                                                    onPageChange={p => { updateParams({ seriesPage: String(p) }); window.scrollTo({ top: 0, behavior: 'smooth' }); }} />
+                                                    onPageChange={handleFilteredPageChange} />
                                             </div>
                                         )}
 
@@ -876,7 +888,7 @@ function Home() {
                                                     ))}
                                                 </ContentGrid>
                                                 <Pagination currentPage={seriesPage} totalPages={filtSeriesTotalPages}
-                                                    onPageChange={p => { updateParams({ seriesPage: String(p) }); window.scrollTo({ top: 0, behavior: 'smooth' }); }} />
+                                                    onPageChange={handleFilteredPageChange} />
                                             </div>
                                         )}
 
@@ -897,7 +909,7 @@ function Home() {
                                                     ))}
                                                 </ContentGrid>
                                                 <Pagination currentPage={seriesPage} totalPages={albumTotalPages}
-                                                    onPageChange={p => { updateParams({ seriesPage: String(p) }); window.scrollTo({ top: 0, behavior: 'smooth' }); }} />
+                                                    onPageChange={handleFilteredPageChange} />
                                             </div>
                                         )}
                                     </div>
@@ -922,7 +934,12 @@ function Home() {
             {showAlbumForm && (
                 <AlbumFormModal
                     album={null}
-                    onSaved={() => { setShowAlbumForm(false); fetchAlbumSections(); toast.success('Album created — add images from the album detail page'); navigate('/?ct=albums&mode=filtered'); }}
+                    onSaved={() => {
+                        setShowAlbumForm(false);
+                        fetchAlbumSections();
+                        toast.success('Album created — add images from the album detail page');
+                        navigate('/filtered?ct=albums');
+                    }}
                     onClose={() => setShowAlbumForm(false)}
                 />
             )}
@@ -966,10 +983,10 @@ function EmptyState({ hasFilters, navigate, isAdmin }) {
             <p className="text-slate-400 text-lg mb-2">{hasFilters ? 'No results found' : 'Nothing here yet'}</p>
             <p className="text-slate-500 mb-6 text-sm">{hasFilters ? 'Try adjusting your filters' : isAdmin ? 'Start by uploading a video' : 'Check back later for new content'}</p>
             {!hasFilters && isAdmin && (
-                <button onClick={() => navigate('/upload')}
+                <Link to="/upload"
                     className="flex items-center gap-2 px-5 py-2.5 bg-red-500 text-white rounded-lg hover:bg-red-600 transition text-sm">
                     <Plus className="w-4 h-4" /> Upload Video
-                </button>
+                </Link>
             )}
         </div>
     );
@@ -983,10 +1000,10 @@ export function AppHeader({ actions }) {
         <>
             <header className="sticky top-0 z-30 bg-slate-950/95 backdrop-blur-sm border-b border-slate-800">
                 <div className="flex items-center justify-between gap-2 px-4 sm:px-6 py-2.5">
-                    <a href="/"
+                    <Link to="/"
                         className="text-xl sm:text-2xl font-bold text-red-500 hover:text-red-400 transition shrink-0 tracking-tight">
                         VIBEFLIX
-                    </a>
+                    </Link>
                     <div className="flex items-center gap-2">
                         {actions}
                         {user && <UserAvatarButton user={user} isAdmin={isAdmin} onClick={() => setShowProfile(true)} />}

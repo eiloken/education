@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
     Images, Heart, Tag, Plus, Search, SlidersHorizontal,
     X, Eye, ChevronLeft, ChevronRight, LayoutGrid, RefreshCw,
@@ -46,7 +46,7 @@ function AlbumCard({ album, onToggleFavorite }) {
     const { title, imageCount = 0, totalViews = 0, tags, isFavorite, mosaicPath, coverPath } = album;
     const cover = mosaicPath || coverPath;
     return (
-        <a href={`/albums/${album._id}`}
+        <Link to={`/albums/${album._id}`}
             className="relative bg-slate-900 rounded-xl overflow-hidden border border-slate-800 hover:border-slate-600 transition cursor-pointer group flex flex-col h-full">
             <div className="relative aspect-video bg-slate-800 overflow-hidden flex-none">
                 <AlbumCover coverPath={cover} title={title} />
@@ -97,7 +97,7 @@ function AlbumCard({ album, onToggleFavorite }) {
                     </div>
                 )}
             </div>
-        </a>
+        </Link>
     );
 }
 

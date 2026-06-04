@@ -50,6 +50,11 @@ function App() {
         <AuthGate>
           <Routes>
             <Route path="/" element={<Home />} />
+            <Route path="/:mode" element={<Home />} />
+            <Route path="/:mode/:section" element={<Home />} />
+            <Route path="/:mode/:section/:seriesPage" element={<Home />} />
+            <Route path="/:mode/:view" element={<Home />} />
+
             <Route path="/series/:id" element={<SeriesDetail />} />
             <Route path="/video/:id" element={<VideoDetail />} />
             <Route path="/albums/:id" element={<AlbumDetail />} />

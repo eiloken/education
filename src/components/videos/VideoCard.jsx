@@ -3,6 +3,7 @@ import { generalAPI, historyAPI } from "../../api/api";
 import { Ban, CircleCheck, Clock, Eye, Film, Heart, Play } from "lucide-react";
 import { TagsContainer } from "../series/SeriesCard";
 import { formatDuration, formatViews } from "../../utils/format";
+import { Link } from "react-router-dom";
 
 // Fetch saved progress (seconds) for a given videoId from the server
 function useSavedProgress(videoId, duration) {
@@ -28,8 +29,8 @@ export default function VideoCard({ video, onToggleFavorite, onTagClick, onStudi
     const { hlsStatus } = video;
 
     return (
-        <a
-            href={video.seriesId ? `/series/${video.seriesId}?ep=${video._id}` : `/video/${video._id}`}
+        <Link
+            to={video.seriesId ? `/series/${video.seriesId}?ep=${video._id}` : `/video/${video._id}`}
             className="relative bg-slate-900 rounded-xl overflow-hidden border border-slate-800 hover:border-slate-600 transition cursor-pointer group flex flex-col h-full"
         >
             {/* Thumbnail */}
@@ -130,6 +131,6 @@ export default function VideoCard({ video, onToggleFavorite, onTagClick, onStudi
                     <TagsContainer tags={video.tags}       color="slate"  onClick={onTagClick}       limit={3} />
                 </div>
             </div>
-        </a>
+        </Link>
     );
 }

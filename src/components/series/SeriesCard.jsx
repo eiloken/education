@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { generalAPI } from "../../api/api";
 import { Heart, Layers, Play } from "lucide-react";
+import { Link } from "react-router-dom";
 
 // Read latest saved episode progress for a series — returns { episodeId, pct } or null
 function useSeriesProgress(series) {
@@ -22,8 +23,8 @@ function SeriesCard({ series, onToggleFavorite, onTagClick, onStudioClick, onCha
     const { title, thumbnailPath, episodeCount, seasonCount, tags, actors, characters, studios, isFavorite } = series;
 
     return (
-        <a
-            href={`/series/${series._id}`}
+        <Link
+            to={`/series/${series._id}`}
             className="relative bg-slate-900 rounded-xl overflow-hidden border border-slate-800 hover:border-slate-600 transition cursor-pointer group flex flex-col h-full"
         >
             {/* Thumbnail */}
@@ -100,7 +101,7 @@ function SeriesCard({ series, onToggleFavorite, onTagClick, onStudioClick, onCha
                     <TagsContainer tags={tags}       color="slate"  onClick={onTagClick}       limit={3} />
                 </div>
             </div>
-        </a>
+        </Link>
     );
 }
 

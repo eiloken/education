@@ -578,14 +578,14 @@ function groupByDate(imgs) {
 const GridItem = React.memo(function GridItem({ img, i, isSel, selectMode, onClick, onMouseDown, onMouseUp, onMouseLeave, onTouchStart, onTouchEnd, onTouchMove }) {
     return (
         <div
-            onClick={() => onClick(i)}
+            onClick={(e) => onClick(i, e.shiftKey || e.metaKey || e.ctrlKey)}
             onMouseDown={() => onMouseDown(i)}
             onMouseUp={onMouseUp}
             onMouseLeave={onMouseLeave}
             onTouchStart={() => onTouchStart(i)}
             onTouchEnd={onTouchEnd}
             onTouchMove={onTouchMove}
-            className={`relative aspect-square rounded-lg overflow-hidden cursor-pointer group border-2 transition-all ${isSel ? 'border-pink-500 ring-2 ring-pink-500/30' : 'border-transparent hover:border-slate-600'}`}
+            className={`relative aspect-square rounded-lg overflow-hidden cursor-pointer group border-2 transition-all select-none ${isSel ? 'border-pink-500 ring-2 ring-pink-500/30' : 'border-transparent hover:border-slate-600'}`}
             style={{ contentVisibility: 'auto', containIntrinsicSize: '0 160px' }}>
             <LazyThumb src={albumAPI.thumbUrl(img.imagePath)} alt={img.title || ''}
                 className="absolute inset-0 group-hover:scale-105 transition-transform duration-300 overflow-hidden" />
@@ -668,18 +668,6 @@ export default function AlbumDetail() {
     const [selectMode, setSelectMode] = useState(false);
     const [selected,   setSelected]   = useState(new Set());
     const lastClickIdx  = useRef(null);   // for shift-range select
-    // Track shift key state reliably via global keydown/keyup — e.shiftKey on
-    // synthetic click events can be stale in some browsers/React versions.
-    const shiftHeldRef  = useRef(false);
-    useEffect(() => {
-        const dn = (e) => { if (e.key === 'Shift') shiftHeldRef.current = true;  };
-        const up = (e) => { if (e.key === 'Shift') shiftHeldRef.current = false; };
-        window.addEventListener('keydown', dn);
-        window.addEventListener('keyup',   up);
-        // Clear on blur so release outside window is handled
-        window.addEventListener('blur', () => { shiftHeldRef.current = false; });
-        return () => { window.removeEventListener('keydown', dn); window.removeEventListener('keyup', up); };
-    }, []);
 
     const [viewerOpen,   setViewerOpen]   = useState(false);
     const [viewerImages, setViewerImages] = useState([]);
@@ -726,6 +714,10 @@ export default function AlbumDetail() {
     const [sortBy,    setSortBy]    = useState('order');
     const [showOpts,  setShowOpts]  = useState(false);
     const optsRef = useRef(null);
+
+    useEffect(() => {
+        if (album?.title) document.title = album.title;
+    }, [album]);
 
     // Close options panel on outside click
     useEffect(() => {
@@ -798,8 +790,8 @@ export default function AlbumDetail() {
         if (selectMode) exitSelect();
     };
 
-    const handleImgClick = useCallback((i) => {
-        if (selectMode) { toggleSelect(displayImages[i]._id, i, shiftHeldRef.current); return; }
+    const handleImgClick = useCallback((i, shiftHeld = false) => {
+        if (selectMode) { toggleSelect(displayImages[i]._id, i, shiftHeld); return; }
         setViewerImages(displayImages);
         setViewerIndex(i);
         setViewerOpen(true);
@@ -857,7 +849,7 @@ export default function AlbumDetail() {
 
     // ── Shared grid item event handlers (stable refs for memo) ─────────────────
     const gridHandlers = {
-        onClick:      (i) => handleImgClick(i),
+        onClick:      (i, e) => handleImgClick(i, e?.shiftKey),
         onMouseDown:  (i)    => startLongPress(i),
         onMouseUp:    ()     => cancelLongPress(),
         onMouseLeave: ()     => cancelLongPress(),
