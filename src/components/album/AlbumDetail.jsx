@@ -561,6 +561,11 @@ const SORT_OPTS = [
     { id: 'name', label: 'Name A→Z' },
 ];
 
+// ─────────────────────────────────────────────────────────────────────────────
+// VIRTUAL RENDERING PAGE SIZE
+// ─────────────────────────────────────────────────────────────────────────────
+const PAGE_SIZE = 60;
+
 function sortImages(imgs, sortBy) {
     const a = [...imgs];
     switch (sortBy) {
@@ -666,27 +671,24 @@ function DropConfirmModal({ files, onConfirm, onCancel }) {
     );
 }
 
-function RenderGrid({ imgs = [], selected = new Set(), selectMode = false, baseOffset = 0, colsCls, handleImgClick, onMouseDown, onMouseUp, onMouseLeave, onTouchStart, onTouchEnd, onTouchMove }) {
+function RenderGrid({ imgs = [], selected = new Set(), selectMode = false, colsCls, handleImgClick, onMouseDown, onMouseUp, onMouseLeave, onTouchStart, onTouchEnd, onTouchMove }) {
     return (
         <div className={`grid ${colsCls} gap-1.5`}>
-            {imgs.map((img, li) => {
-                const i = baseOffset + li;
-                return (
-                    <GridItem 
-                        key={img._id} 
-                        img={img}
-                        isSel={selected.has(img._id)} 
-                        selectMode={selectMode}
-                        onClick={(e) => handleImgClick(i, e.shiftKey)}
-                        onMouseDown={() => onMouseDown(i)}
-                        onMouseUp={onMouseUp}
-                        onMouseLeave={onMouseLeave}
-                        onTouchStart={() => onTouchStart(i)}
-                        onTouchEnd={onTouchEnd}
-                        onTouchMove={onTouchMove} 
-                    />
-                );
-            })}
+            {imgs.map((img) => (
+                <GridItem 
+                    key={img._id} 
+                    img={img}
+                    isSel={selected.has(img._id)} 
+                    selectMode={selectMode}
+                    onClick={(e) => handleImgClick(img._id, e.shiftKey)}
+                    onMouseDown={() => onMouseDown(img._id)}
+                    onMouseUp={onMouseUp}
+                    onMouseLeave={onMouseLeave}
+                    onTouchStart={() => onTouchStart(img._id)}
+                    onTouchEnd={onTouchEnd}
+                    onTouchMove={onTouchMove} 
+                />
+            ))}
         </div>
     );
 }
@@ -706,6 +708,10 @@ export default function AlbumDetail() {
     const [selectMode, setSelectMode] = useState(false);
     const [selected, setSelected] = useState(new Set());
     const lastClickIdx = useRef(null);   // for shift-range select
+
+    // Virtual rendering
+    const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+    const sentinelRef = useRef(null);
 
     const [viewerOpen, setViewerOpen] = useState(false);
     const [viewerImages, setViewerImages] = useState([]);
@@ -784,29 +790,67 @@ export default function AlbumDetail() {
 
     // ── Derived sorted/grouped images ──────────────────────────────────────────
     const displayImages = useMemo(() => sortImages(images, viewMode === 'sorted' ? sortBy : 'order'), [images, viewMode, sortBy]);
-    const groupedImages = useMemo(() => viewMode === 'grouped' ? groupByDate(displayImages) : [], [viewMode, displayImages]);
+
+    // ── id → absolute-index map (fixes grouped-mode range select) ─────────────
+    const displayIndexMap = useMemo(() => {
+        const m = new Map();
+        displayImages.forEach((img, i) => m.set(img._id, i));
+        return m;
+    }, [displayImages]);
+
+    // ── Virtual rendering: only render visible slice ────────────────────────────
+    useEffect(() => { setVisibleCount(PAGE_SIZE); }, [displayImages]);
+
+    const visibleImages = useMemo(
+        () => displayImages.slice(0, visibleCount),
+        [displayImages, visibleCount]
+    );
+    const visibleGrouped = useMemo(
+        () => viewMode === 'grouped' ? groupByDate(visibleImages) : [],
+        [viewMode, visibleImages]
+    );
+
+    // Sentinel observer — loads next page of items when bottom is reached
+    useEffect(() => {
+        const el = sentinelRef.current;
+        if (!el || visibleCount >= displayImages.length) return;
+        const ob = new IntersectionObserver(([entry]) => {
+            if (entry.isIntersecting)
+                setVisibleCount(c => Math.min(c + PAGE_SIZE, displayImages.length));
+        }, { rootMargin: '300px' });
+        ob.observe(el);
+        return () => ob.disconnect();
+    }, [visibleCount, displayImages.length]);
 
     // ── Long-press ─────────────────────────────────────────────────────────────
-    const startLongPress = (i) => {
+    const startLongPress = useCallback((imgId) => {
         longPressRef.current = setTimeout(() => {
+            const i = displayIndexMap.get(imgId) ?? -1;
+            if (i === -1) return;
             if (!selectMode) setSelectMode(true);
-            setSelected(new Set([displayImages[i]._id]));
+            setSelected(new Set([imgId]));
             lastClickIdx.current = i;
         }, 500);
-    };
+    }, [selectMode, displayIndexMap]);
     const cancelLongPress = () => clearTimeout(longPressRef.current);
 
     // ── Select helpers ─────────────────────────────────────────────────────────
     const toggleSelect = useCallback((imgId, idx, shiftHeld) => {
+        if (shiftHeld && lastClickIdx.current !== null) {
+            // Range select: pre-compute ids outside setState (avoids stale closure)
+            const lo = Math.min(lastClickIdx.current, idx);
+            const hi = Math.max(lastClickIdx.current, idx);
+            const rangeIds = displayImages.slice(lo, hi + 1).map(img => img._id);
+            setSelected(prev => {
+                const n = new Set(prev);
+                rangeIds.forEach(id => n.add(id));
+                return n;
+            });
+            // Keep anchor fixed — don't update lastClickIdx on range select
+            return;
+        }
         setSelected(prev => {
             const n = new Set(prev);
-            if (shiftHeld && lastClickIdx.current !== null) {
-                // Range select from lastClickIdx to idx
-                const lo = Math.min(lastClickIdx.current, idx);
-                const hi = Math.max(lastClickIdx.current, idx);
-                for (let k = lo; k <= hi; k++) n.add(displayImages[k]._id);
-                return n;
-            }
             n.has(imgId) ? n.delete(imgId) : n.add(imgId);
             return n;
         });
@@ -830,13 +874,15 @@ export default function AlbumDetail() {
         setViewerOpen(true);
     };
 
-    const handleImgClick = useCallback((i, shiftHeld = false) => {
-        if (selectMode) { toggleSelect(displayImages[i]._id, i, shiftHeld); return; }
+    const handleImgClick = useCallback((imgId, shiftHeld = false) => {
+        const i = displayIndexMap.get(imgId) ?? -1;
+        if (i === -1) return;
+        if (selectMode) { toggleSelect(imgId, i, shiftHeld); return; }
         setViewerImages(displayImages);
         setViewerIndex(i);
         previousScrollPosRef.current = window.scrollY;
         setViewerOpen(true);
-    }, [selectMode, displayImages, toggleSelect]);
+    }, [selectMode, displayImages, displayIndexMap, toggleSelect]);
 
     const handleImageFavToggle = useCallback((imageId, isFavorite) => {
         setImages(prev => prev.map(img => img._id === imageId ? { ...img, isFavorite } : img));
@@ -1001,7 +1047,7 @@ export default function AlbumDetail() {
                 {/* Image Grid — normal or sorted */}
                 {hasImages && viewMode !== 'grouped' && (
                     <RenderGrid 
-                        imgs={displayImages}
+                        imgs={visibleImages}
                         colsCls={colsCls}
                         handleImgClick={handleImgClick}
                         onMouseDown={startLongPress}
@@ -1016,37 +1062,45 @@ export default function AlbumDetail() {
                 )}
 
                 {/* Image Grid — grouped by date */}
-                {hasImages && viewMode === 'grouped' && (() => {
-                    let offset = 0;
-                    return groupedImages.map(([dateLabel, imgs]) => {
-                        const base = offset;
-                        offset += imgs.length;
-                        return (
-                            <div key={dateLabel} className="space-y-2">
-                                <div className="flex items-center gap-2">
-                                    <Calendar className="w-3.5 h-3.5 text-slate-500" />
-                                    <span className="text-slate-400 text-sm font-medium">{dateLabel}</span>
-                                    <span className="text-slate-600 text-xs">({imgs.length})</span>
-                                    <div className="flex-1 h-px bg-slate-800" />
-                                </div>
-                                <RenderGrid 
-                                    imgs={imgs}
-                                    baseOffset={base}
-                                    colsCls={colsCls}
-                                    handleImgClick={handleImgClick}
-                                    onMouseDown={startLongPress}
-                                    onMouseLeave={cancelLongPress}
-                                    onMouseUp={cancelLongPress}
-                                    onTouchStart={startLongPress}
-                                    onTouchEnd={cancelLongPress}
-                                    onTouchMove={cancelLongPress}
-                                    selectMode={selectMode}
-                                    selected={selected}
-                                />
-                            </div>
-                        );
-                    });
-                })()}
+                {hasImages && viewMode === 'grouped' && visibleGrouped.map(([dateLabel, imgs]) => (
+                    <div key={dateLabel} className="space-y-2">
+                        <div className="flex items-center gap-2">
+                            <Calendar className="w-3.5 h-3.5 text-slate-500" />
+                            <span className="text-slate-400 text-sm font-medium">{dateLabel}</span>
+                            <span className="text-slate-600 text-xs">({imgs.length})</span>
+                            <div className="flex-1 h-px bg-slate-800" />
+                        </div>
+                        <RenderGrid 
+                            imgs={imgs}
+                            colsCls={colsCls}
+                            handleImgClick={handleImgClick}
+                            onMouseDown={startLongPress}
+                            onMouseLeave={cancelLongPress}
+                            onMouseUp={cancelLongPress}
+                            onTouchStart={startLongPress}
+                            onTouchEnd={cancelLongPress}
+                            onTouchMove={cancelLongPress}
+                            selectMode={selectMode}
+                            selected={selected}
+                        />
+                    </div>
+                ))}
+
+                {/* Load-more sentinel + progress */}
+                {hasImages && (
+                    <div ref={sentinelRef} className="flex flex-col items-center gap-1.5 py-4">
+                        {visibleCount < displayImages.length ? (
+                            <>
+                                <div className="w-5 h-5 border-2 border-pink-500 border-t-transparent rounded-full animate-spin" />
+                                <p className="text-slate-600 text-xs">
+                                    Showing {visibleCount} of {displayImages.length} images
+                                </p>
+                            </>
+                        ) : displayImages.length > PAGE_SIZE && (
+                            <p className="text-slate-700 text-xs">All {displayImages.length} images loaded</p>
+                        )}
+                    </div>
+                )}
             </div>
 
             {/* Toolbar */}
@@ -1132,7 +1186,7 @@ export default function AlbumDetail() {
                                 </button>
 
                                 {showOpts && (
-                                    <div className="absolute right-0 top-full mt-2 z-40 bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl p-4 w-72 space-y-4">
+                                    <div className="absolute right-0 bottom-[calc(100%+1rem)] mt-2 z-40 bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl p-4 w-72 space-y-4">
                                         {/* Grid size */}
                                         <div>
                                             <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-2 flex items-center gap-1.5">

@@ -88,6 +88,10 @@ function CreateSeries({ mode = 'create' }) {
     const [thumbnailPreview, setThumbnailPreview] = useState(null);
 
     useEffect(() => {
+        document.title = mode === 'edit' ? "Edit Series" : "Create Series";
+    }, [mode]);
+
+    useEffect(() => {
         if (mode !== 'edit' || !id) return;
         (async () => {
             try {

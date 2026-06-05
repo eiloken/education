@@ -377,6 +377,10 @@ function UploadVideo({ mode = "new" }) {
         } catch (_) {}
     }, []);
 
+    useEffect(() => {
+        document.title = mode === "new" ? "New Video" : "Edit Video";
+    }, [mode]);
+
     useEffect(() => { fetchMetaData(); }, [fetchMetaData]);
 
     // Cleanup client-side blob URLs on unmount

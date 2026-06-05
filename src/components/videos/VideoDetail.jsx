@@ -81,6 +81,10 @@ export function SeriesDetail() {
 
     useEffect(() => { fetchData(); }, [fetchData]);
 
+    useEffect(() => {
+        document.title = currentEpisode?.title || (series?.title && String(series.title).toUpperCase()) || 'VibeFlix';
+    }, [series, currentEpisode]);
+
     // Fetch server-side watch progress for all episodes
     useEffect(() => {
         if (episodes.length === 0) return;

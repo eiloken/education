@@ -210,7 +210,7 @@ function AlbumSection({ section, items, handleToggleFavoriteAlbum }) {
                         className={`px-3 py-2 rounded-lg transition hidden sm:flex ${canLeft ? 'text-slate-400 hover:text-slate-300 hover:bg-pink-800/30' : 'text-slate-600 cursor-not-allowed'}`}>
                         <ChevronLeft className="w-3 h-3" />
                     </button>
-                    <Link to="/filtered?ct=albums" className="px-3 py-2 rounded-lg text-slate-400 hover:text-slate-300 hover:bg-pink-800/30 transition text-sm">
+                    <Link to={`/album-section/${section.id}`} className="px-3 py-2 rounded-lg text-slate-400 hover:text-slate-300 hover:bg-pink-800/30 transition text-sm">
                         Show all
                     </Link>
                     <button disabled={!canRight} onClick={() => rowRef.current?.scrollRight()}
@@ -333,17 +333,19 @@ function Home() {
 
     // ── Derive route state from path params ───────────────────────────────────
     // Admin views (/dashboard, /requests) are top-level modes
-    const adminView = isAdmin && ADMIN_MODES.some(m => m.value === modeParam) ? modeParam : null;
-    const homeMode = adminView ? 'home' : (modeParam || 'home');
+    const adminView = useMemo(() => isAdmin && ADMIN_MODES.some(m => m.value === modeParam) ? modeParam : null, [modeParam, isAdmin]);
+    const homeMode = useMemo(() => adminView ? 'home' : (modeParam || 'home'), [modeParam, adminView]);
 
     // In detail mode the section id comes from the :section path param
-    const detailSectionId = homeMode === 'detail' ? section : null;
-    const detailSection = SECTIONS.find(s => s.id === detailSectionId) || null;
+    const detailSectionId = useMemo(() => homeMode === 'detail' ? section : null, [homeMode, section]);
+    const detailSection = useMemo(() => SECTIONS.find(s => s.id === detailSectionId) || null, [detailSectionId]);
+
+    // Album section detail mode
+    const detailAlbumSection = useMemo(() => homeMode === 'album-section' ? (ALBUM_SECTIONS.find(s => s.id === section) || null) : null, [homeMode, section]);
+    const albumSectionPage = useMemo(() => homeMode === 'album-section' ? parseInt(seriesPageParam || '1', 10) : 1, [homeMode, seriesPageParam]);
 
     // Page: path param for detail mode, search param for filtered mode
-    const seriesPage = homeMode === 'detail'
-        ? parseInt(seriesPageParam || '1', 10)
-        : parseInt(searchParams.get('seriesPage') || '1', 10);
+    const seriesPage = useMemo(() => homeMode === 'detail' ? parseInt(seriesPageParam || '1', 10) : parseInt(searchParams.get('seriesPage') || '1', 10), [homeMode, seriesPageParam, searchParams]);
 
     // ── Filters come from search params only ──────────────────────────────────
     const filtersKey = searchParams.toString();
@@ -368,6 +370,10 @@ function Home() {
     const [filtSeriesList, setFiltSeriesList] = useState([]);
     const [filtSeriesLoading, setFiltSeriesLoading] = useState(false);
     const [filtSeriesTotalPages, setFiltSeriesTotalPages] = useState(1);
+
+    const [albumSectionList, setAlbumSectionList] = useState([]);
+    const [albumSectionLoading, setAlbumSectionLoading] = useState(false);
+    const [albumSectionTotalPages, setAlbumSectionTotalPages] = useState(1);
 
     const [showFilters, setShowFilters] = useState(false);
     const [searchTerm, setSearchTerm] = useState(filters.search || '');
@@ -490,11 +496,30 @@ function Home() {
         finally { setAlbumLoading(false); }
     }, [seriesPage, buildApiParams, contentType]);
 
+    useEffect(() => {
+        document.title = (adminView && ADMIN_MODES.find(m => m.value === adminView)?.label) || (homeMode === 'filtered' ? "Filtered" : (detailSection?.title || detailAlbumSection?.title || 'VibeFlix')); 
+    }, [adminView, detailSection, detailAlbumSection, homeMode]);
+
     useEffect(() => { if (homeMode === 'home') { fetchSections(); fetchAlbumSections(); } }, [homeMode, fetchSections, fetchAlbumSections]);
     useEffect(() => { if (homeMode === 'detail') fetchSeriesContent(); }, [homeMode, fetchSeriesContent]);
     useEffect(() => { if (homeMode === 'filtered') fetchVideoContent(); }, [homeMode, fetchVideoContent]);
     useEffect(() => { if (homeMode === 'filtered') fetchFilteredSeries(); }, [homeMode, fetchFilteredSeries]);
     useEffect(() => { if (homeMode === 'filtered') fetchFilteredAlbums(); }, [homeMode, fetchFilteredAlbums]);
+
+    // ── Album section (show-all detail) ──────────────────────────────────────
+    const fetchAlbumSectionContent = useCallback(async () => {
+        if (!detailAlbumSection) return;
+        setAlbumSectionLoading(true);
+        try {
+            const p = detailAlbumSection.getParams();
+            const data = await albumAPI.getAlbums({ ...p, page: albumSectionPage, limit: 20 });
+            setAlbumSectionList(data.albums || []);
+            setAlbumSectionTotalPages(data.totalPages || 1);
+        } catch { toast.error('Failed to load albums'); }
+        finally { setAlbumSectionLoading(false); }
+    }, [detailAlbumSection, albumSectionPage]);
+
+    useEffect(() => { if (homeMode === 'album-section') fetchAlbumSectionContent(); }, [homeMode, fetchAlbumSectionContent]);
 
     useEffect(() => { setSearchTerm(filters.search || ''); }, [filters.search]);
 
@@ -608,6 +633,11 @@ function Home() {
     // Pagination helpers
     const handleDetailPageChange = (p) => {
         navigate(`/detail/${detailSectionId}/${p}`);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+
+    const handleAlbumSectionPageChange = (p) => {
+        navigate(`/album-section/${section}/${p}`);
         window.scrollTo({ top: 0, behavior: 'smooth' });
     };
 
@@ -786,12 +816,18 @@ function Home() {
                     <AdminRequests currentUserId={user?._id} />
                 ) : (
                     <>
-                        {(homeMode === 'detail' || homeMode === 'filtered') && (
+                        {(homeMode === 'detail' || homeMode === 'filtered' || homeMode === 'album-section') && (
                             <div className="flex items-center gap-3 mb-6">
                                 {homeMode === 'detail' && detailSection && (
                                     <div className="flex items-center gap-2">
                                         <detailSection.icon className="w-5 h-5 text-red-500" />
                                         <h2 className="text-xl font-bold text-white">{detailSection.title}</h2>
+                                    </div>
+                                )}
+                                {homeMode === 'album-section' && detailAlbumSection && (
+                                    <div className="flex items-center gap-2">
+                                        <detailAlbumSection.icon className="w-5 h-5 text-pink-500" />
+                                        <h2 className="text-xl font-bold text-white">{detailAlbumSection.title}</h2>
                                     </div>
                                 )}
                                 {homeMode === 'filtered' && (
@@ -850,6 +886,26 @@ function Home() {
                                                     onPageChange={handleDetailPageChange} />
                                             </>
                                         )}
+                                    </>
+                                )}
+                            </>
+                        )}
+
+                        {/* ── Album section mode (show-all for album rows) ─── */}
+                        {homeMode === 'album-section' && (
+                            <>
+                                {albumSectionLoading ? <LoadingSpinner /> : albumSectionList.length === 0 ? (
+                                    <EmptyState hasFilters={false} isAdmin={isAdmin} />
+                                ) : (
+                                    <>
+                                        <ContentGrid>
+                                            {albumSectionList.map(album => (
+                                                <HomeAlbumCard key={album._id} album={album}
+                                                    onToggleFavorite={() => handleToggleFavoriteAlbum(album._id)} />
+                                            ))}
+                                        </ContentGrid>
+                                        <Pagination currentPage={albumSectionPage} totalPages={albumSectionTotalPages}
+                                            onPageChange={handleAlbumSectionPageChange} />
                                     </>
                                 )}
                             </>
