@@ -402,7 +402,7 @@ function AdminSection() {
             const es = new EventSource(videoAPI.transcodeQueueStreamUrl(), { withCredentials: true });
             esRef.current = es;
             es.onmessage = (e) => {
-                try { setQueue(JSON.parse(e.data)); setQueueLoading(false); } catch (_) {}
+                try { setQueue(JSON.parse(e.data)); setQueueLoading(false); } catch {}
             };
             es.onerror = () => { es.close(); setTimeout(connect, 5000); };
         };

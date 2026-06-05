@@ -21,20 +21,48 @@ import AlbumFormModal from "./album/AlbumFormModal.jsx";
 // ─── Util ─────────────────────────────────────────────────────────────────────
 const daysAgoISO = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString(); };
 
+// ─── Auto-hide header on scroll down, reveal on scroll up ────────────────────
+function useScrollHide(threshold = 8) {
+    const [visible, setVisible] = useState(true);
+    const lastY = useRef(0);
+    const ticking = useRef(false);
+    useEffect(() => {
+        const onScroll = () => {
+            if (ticking.current) return;
+            ticking.current = true;
+            requestAnimationFrame(() => {
+                const y = window.scrollY;
+                if (y < threshold) {
+                    setVisible(true);                        // always show at very top
+                } else if (y < lastY.current - 4) {
+                    setVisible(true);                        // scrolling up
+                } else if (y > lastY.current + 4) {
+                    setVisible(false);                       // scrolling down
+                }
+                lastY.current   = y;
+                ticking.current = false;
+            });
+        };
+        window.addEventListener('scroll', onScroll, { passive: true });
+        return () => window.removeEventListener('scroll', onScroll);
+    }, [threshold]);
+    return visible;
+}
+
 const SECTIONS = [
-    { id: 'newest',       title: 'New Arrivals',        icon: Clock,       getParams: () => ({ sortBy: 'lastEpisodeAt', order: 'desc' }) },
-    { id: 'trending_week',title: 'Trending This Week',  icon: TrendingUp,  getParams: () => ({ sortBy: 'views', order: 'desc', dateFrom: daysAgoISO(7) }) },
-    { id: 'mostViewed',   title: 'Most Viewed',         icon: Flame,       getParams: () => ({ sortBy: 'views', order: 'desc' }) },
+    { id: 'newest', title: 'New Arrivals', icon: Clock, getParams: () => ({ sortBy: 'lastEpisodeAt', order: 'desc' }) },
+    { id: 'trending_week', title: 'Trending This Week', icon: TrendingUp, getParams: () => ({ sortBy: 'views', order: 'desc', dateFrom: daysAgoISO(7) }) },
+    { id: 'mostViewed', title: 'Most Viewed', icon: Flame, getParams: () => ({ sortBy: 'views', order: 'desc' }) },
 ];
 
 const ALBUM_SECTIONS = [
-    { id: 'albums_new',   title: 'New Albums',          icon: Images,      getParams: () => ({ sortBy: 'updatedAt', order: 'desc' }) },
-    { id: 'albums_top',   title: 'Most Viewed Albums',  icon: Eye,         getParams: () => ({ sortBy: 'views',     order: 'desc' }) },
+    { id: 'albums_new', title: 'New Albums', icon: Images, getParams: () => ({ sortBy: 'updatedAt', order: 'desc' }) },
+    { id: 'albums_top', title: 'Most Viewed Albums', icon: Flame, getParams: () => ({ sortBy: 'views', order: 'desc' }) },
 ];
 
 const ADMIN_MODES = [
     { value: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { value: 'requests',  label: 'Requests',  icon: Users },
+    { value: 'requests', label: 'Requests', icon: Users },
 ];
 
 // ─── Activity ping ────────────────────────────────────────────────────────────
@@ -49,10 +77,10 @@ function useActivityPing() {
             }
         };
         window.addEventListener('mousemove', fire, { passive: true });
-        window.addEventListener('keydown',   fire, { passive: true });
+        window.addEventListener('keydown', fire, { passive: true });
         return () => {
             window.removeEventListener('mousemove', fire);
-            window.removeEventListener('keydown',   fire);
+            window.removeEventListener('keydown', fire);
         };
     }, []);
 }
@@ -70,6 +98,7 @@ function AlbumCoverMosaic({ coverPath, title }) {
         ob.observe(el);
         return () => ob.disconnect();
     }, []);
+
     return (
         <div ref={ref} className="w-full h-full">
             {!visible ? (
@@ -164,7 +193,7 @@ function HomeSection({ section, items, cardProps, sectionAddress, handleToggleFa
 // ─── AlbumSection (horizontal scroll row) ────────────────────────────────────
 function AlbumSection({ section, items, handleToggleFavoriteAlbum }) {
     const rowRef = useRef(null);
-    const [canLeft,  setCanLeft]  = useState(false);
+    const [canLeft, setCanLeft] = useState(false);
     const [canRight, setCanRight] = useState(false);
     if (items.length === 0) return null;
     const Icon = section.icon;
@@ -277,7 +306,7 @@ export function UserAvatarButton({ user, isAdmin, onClick }) {
 
 // ─── Content type tab labels ──────────────────────────────────────────────────
 const CT_TABS = [
-    { value: 'all',    label: 'All',    icon: Filter },
+    { value: 'all', label: 'All', icon: Filter },
     { value: 'videos', label: 'Videos', icon: Film },
     { value: 'series', label: 'Series', icon: Layers },
     { value: 'albums', label: 'Albums', icon: Images },
@@ -289,13 +318,14 @@ function Home() {
     const { mode: modeParam, section, seriesPage: seriesPageParam } = useParams();
     const { user, loading: authLoading, isAdmin } = useAuth();
     useActivityPing();
+    const headerVisible = useScrollHide();
 
-    const [showProfile,    setShowProfile]    = useState(false);
-    const [showAlbumForm,  setShowAlbumForm]  = useState(false);
+    const [showProfile, setShowProfile] = useState(false);
+    const [showAlbumForm, setShowAlbumForm] = useState(false);
 
-    const [sectionsData,   setSectionsData]   = useState({});
-    const [sectionsLoading,setSectionsLoading]= useState(true);
-    const [albumSections,  setAlbumSections]  = useState({});
+    const [sectionsData, setSectionsData] = useState({});
+    const [sectionsLoading, setSectionsLoading]= useState(true);
+    const [albumSections, setAlbumSections] = useState({});
     const [albumSectLoading, setAlbumSectLoading] = useState(true);
 
     // ── Search params are used only for filter state ──────────────────────────
@@ -304,11 +334,11 @@ function Home() {
     // ── Derive route state from path params ───────────────────────────────────
     // Admin views (/dashboard, /requests) are top-level modes
     const adminView = isAdmin && ADMIN_MODES.some(m => m.value === modeParam) ? modeParam : null;
-    const homeMode  = adminView ? 'home' : (modeParam || 'home');
+    const homeMode = adminView ? 'home' : (modeParam || 'home');
 
     // In detail mode the section id comes from the :section path param
     const detailSectionId = homeMode === 'detail' ? section : null;
-    const detailSection   = SECTIONS.find(s => s.id === detailSectionId) || null;
+    const detailSection = SECTIONS.find(s => s.id === detailSectionId) || null;
 
     // Page: path param for detail mode, search param for filtered mode
     const seriesPage = homeMode === 'detail'
@@ -323,27 +353,27 @@ function Home() {
     const contentType = filters.contentType || 'all';
 
     // ── Data states ────────────────────────────────────────────────────────────
-    const [seriesList,      setSeriesList]      = useState([]);
-    const [seriesLoading,   setSeriesLoading]   = useState(false);
-    const [seriesTotalPages,setSeriesTotalPages] = useState(1);
+    const [seriesList, setSeriesList] = useState([]);
+    const [seriesLoading, setSeriesLoading] = useState(false);
+    const [seriesTotalPages, setSeriesTotalPages] = useState(1);
 
-    const [videoList,       setVideoList]       = useState([]);
-    const [videoLoading,    setVideoLoading]    = useState(false);
+    const [videoList, setVideoList] = useState([]);
+    const [videoLoading, setVideoLoading] = useState(false);
     const [videoTotalPages, setVideoTotalPages] = useState(1);
 
-    const [albumList,       setAlbumList]       = useState([]);
-    const [albumLoading,    setAlbumLoading]    = useState(false);
+    const [albumList, setAlbumList] = useState([]);
+    const [albumLoading, setAlbumLoading] = useState(false);
     const [albumTotalPages, setAlbumTotalPages] = useState(1);
 
-    const [filtSeriesList,      setFiltSeriesList]      = useState([]);
-    const [filtSeriesLoading,   setFiltSeriesLoading]   = useState(false);
-    const [filtSeriesTotalPages,setFiltSeriesTotalPages] = useState(1);
+    const [filtSeriesList, setFiltSeriesList] = useState([]);
+    const [filtSeriesLoading, setFiltSeriesLoading] = useState(false);
+    const [filtSeriesTotalPages, setFiltSeriesTotalPages] = useState(1);
 
-    const [showFilters,    setShowFilters]    = useState(false);
-    const [searchTerm,     setSearchTerm]     = useState(filters.search || '');
-    const [showQuickSearch,setShowQuickSearch]= useState(false);
+    const [showFilters, setShowFilters] = useState(false);
+    const [searchTerm, setSearchTerm] = useState(filters.search || '');
+    const [showQuickSearch, setShowQuickSearch] = useState(false);
     const quickSearchRef = useRef(null);
-    const [showScrollTop,  setShowScrollTop]  = useState(false);
+    const [showScrollTop, setShowScrollTop] = useState(false);
 
     // ── Active filter check ────────────────────────────────────────────────────
     const hasActiveFilters = useCallback((f) =>
@@ -357,22 +387,22 @@ function Home() {
 
     const buildApiParams = useCallback((extra = {}) => ({
         limit: 20,
-        search:           filters.search     || undefined,
-        tags:             filters.tags?.join(',')           || undefined,
-        tagsExclude:      filters.tagsExclude?.join(',')    || undefined,
-        studios:          filters.studios?.join(',')        || undefined,
-        studiosExclude:   filters.studiosExclude?.join(',') || undefined,
-        actors:           filters.actors?.join(',')         || undefined,
-        actorsExclude:    filters.actorsExclude?.join(',')  || undefined,
-        characters:       filters.characters?.join(',')     || undefined,
-        charactersExclude:filters.charactersExclude?.join(',') || undefined,
-        year:             filters.year       || undefined,
-        favorite:         filters.favorite   || undefined,
-        filterMode:       filters.filterMode,
-        sortBy:           filters.sortBy,
-        order:            filters.order,
-        durationFilter:   filters.durationFilter || undefined,
-        hlsFilter:        filters.hlsFilter      || undefined,
+        search: filters.search || undefined,
+        tags: filters.tags?.join(',') || undefined,
+        tagsExclude: filters.tagsExclude?.join(',') || undefined,
+        studios: filters.studios?.join(',') || undefined,
+        studiosExclude: filters.studiosExclude?.join(',') || undefined,
+        actors: filters.actors?.join(',') || undefined,
+        actorsExclude: filters.actorsExclude?.join(',') || undefined,
+        characters: filters.characters?.join(',') || undefined,
+        charactersExclude: filters.charactersExclude?.join(',') || undefined,
+        year: filters.year || undefined,
+        favorite: filters.favorite || undefined,
+        filterMode: filters.filterMode,
+        sortBy: filters.sortBy,
+        order: filters.order,
+        durationFilter: filters.durationFilter || undefined,
+        hlsFilter: filters.hlsFilter || undefined,
         ...extra,
     }), [filters]);
 
@@ -460,11 +490,11 @@ function Home() {
         finally { setAlbumLoading(false); }
     }, [seriesPage, buildApiParams, contentType]);
 
-    useEffect(() => { if (homeMode === 'home')     { fetchSections(); fetchAlbumSections(); } }, [homeMode, fetchSections, fetchAlbumSections]);
-    useEffect(() => { if (homeMode === 'detail')   fetchSeriesContent(); },    [homeMode, fetchSeriesContent]);
-    useEffect(() => { if (homeMode === 'filtered') fetchVideoContent(); },     [homeMode, fetchVideoContent]);
-    useEffect(() => { if (homeMode === 'filtered') fetchFilteredSeries(); },   [homeMode, fetchFilteredSeries]);
-    useEffect(() => { if (homeMode === 'filtered') fetchFilteredAlbums(); },   [homeMode, fetchFilteredAlbums]);
+    useEffect(() => { if (homeMode === 'home') { fetchSections(); fetchAlbumSections(); } }, [homeMode, fetchSections, fetchAlbumSections]);
+    useEffect(() => { if (homeMode === 'detail') fetchSeriesContent(); }, [homeMode, fetchSeriesContent]);
+    useEffect(() => { if (homeMode === 'filtered') fetchVideoContent(); }, [homeMode, fetchVideoContent]);
+    useEffect(() => { if (homeMode === 'filtered') fetchFilteredSeries(); }, [homeMode, fetchFilteredSeries]);
+    useEffect(() => { if (homeMode === 'filtered') fetchFilteredAlbums(); }, [homeMode, fetchFilteredAlbums]);
 
     useEffect(() => { setSearchTerm(filters.search || ''); }, [filters.search]);
 
@@ -566,12 +596,12 @@ function Home() {
             [field]: (filters[field] || []).filter?.((x) => x !== value) ?? filters[field],
             [`${field}Exclude`]: (filters[`${field}Exclude`] || []).filter?.((x) => x !== value),
         };
-        if (field === 'year')           { updated.year = ''; }
-        if (field === 'favorite')       { updated.favorite = false; }
-        if (field === 'search')         { updated.search = ''; setSearchTerm(''); }
+        if (field === 'year') { updated.year = ''; }
+        if (field === 'favorite') { updated.favorite = false; }
+        if (field === 'search') { updated.search = ''; setSearchTerm(''); }
         if (field === 'durationFilter') { updated.durationFilter = ''; }
-        if (field === 'hlsFilter')      { updated.hlsFilter = ''; }
-        if (field === 'contentType')    { updated.contentType = 'all'; }
+        if (field === 'hlsFilter') { updated.hlsFilter = ''; }
+        if (field === 'contentType') { updated.contentType = 'all'; }
         handleFilterChange(updated);
     };
 
@@ -603,26 +633,26 @@ function Home() {
     const hasPendingSearch = searchTerm !== (filters.search || '');
 
     const cardProps = {
-        onActorClick:     v => handleChipClick('actors', v),
+        onActorClick: v => handleChipClick('actors', v),
         onCharacterClick: v => handleChipClick('characters', v),
-        onStudioClick:    v => handleChipClick('studios', v),
-        onTagClick:       v => handleChipClick('tags', v),
+        onStudioClick: v => handleChipClick('studios', v),
+        onTagClick: v => handleChipClick('tags', v),
     };
 
     // Filtered mode helpers
-    const showVideos  = contentType === 'all' || contentType === 'videos';
-    const showSeries  = contentType === 'all' || contentType === 'series';
-    const showAlbums  = contentType === 'all' || contentType === 'albums';
+    const showVideos = contentType === 'all' || contentType === 'videos';
+    const showSeries = contentType === 'all' || contentType === 'series';
+    const showAlbums = contentType === 'all' || contentType === 'albums';
 
     const filteredIsLoading = videoLoading || filtSeriesLoading || albumLoading;
     const filteredIsEmpty   =
-        (!showVideos  || videoList.length === 0) &&
-        (!showSeries  || filtSeriesList.length === 0) &&
-        (!showAlbums  || albumList.length === 0);
+        (!showVideos || videoList.length === 0) &&
+        (!showSeries || filtSeriesList.length === 0) &&
+        (!showAlbums || albumList.length === 0);
 
     if (authLoading) {
         return (
-            <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+            <div className="min-h-dvh bg-slate-950 flex items-center justify-center">
                 <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-red-500" />
             </div>
         );
@@ -631,9 +661,9 @@ function Home() {
     const isAdminView = !!adminView;
 
     return (
-        <div className="min-h-screen bg-slate-950 px-4 sm:px-6">
+        <div className="min-h-dvh bg-slate-950 px-4 sm:px-6">
             {/* ══ HEADER ═══════════════════════════════════════════════════════ */}
-            <header className="sticky top-0 z-30 bg-slate-950/95 backdrop-blur-sm border-b border-slate-800">
+            <header className={`sticky top-0 z-30 bg-slate-950/95 backdrop-blur-sm border-b border-slate-800 transition-transform duration-300 ease-in-out ${headerVisible ? 'translate-y-0' : '-translate-y-full'}`}>
                 <div className="mx-auto px-3 sm:px-4 pt-3 pb-2">
                     <div className="flex items-center justify-between gap-2">
                         <Link to="/"
@@ -679,12 +709,12 @@ function Home() {
                                 )}
                                 {hasFilters && (
                                     <div className="flex flex-wrap gap-1 mt-1 max-h-20 overflow-y-auto">
-                                        {filters.search        && <FilterPill label={`"${filters.search}"`}    onRemove={() => handleRemoveFilter('search')}         color="slate" />}
+                                        {filters.search && <FilterPill label={`"${filters.search}"`} onRemove={() => handleRemoveFilter('search')} color="slate" />}
                                         {filters.contentType && filters.contentType !== 'all' && <FilterPill label={`Type: ${filters.contentType}`} onRemove={() => handleRemoveFilter('contentType')} color="blue" />}
-                                        {filters.favorite      && <FilterPill label="Favorites"              onRemove={() => handleRemoveFilter('favorite')}       color="red"   />}
-                                        {filters.year          && <FilterPill label={`Year: ${filters.year}`}  onRemove={() => handleRemoveFilter('year')}           color="green" />}
+                                        {filters.favorite && <FilterPill label="Favorites" onRemove={() => handleRemoveFilter('favorite')} color="red" />}
+                                        {filters.year && <FilterPill label={`Year: ${filters.year}`} onRemove={() => handleRemoveFilter('year')} color="green" />}
                                         {filters.durationFilter && <FilterPill label={`${filters.durationFilter}`} onRemove={() => handleRemoveFilter('durationFilter')} color="green" />}
-                                        {filters.hlsFilter      && <FilterPill label={filters.hlsFilter === 'transcoded' ? 'Transcoded' : 'Not transcoded'} onRemove={() => handleRemoveFilter('hlsFilter')} color="green" />}
+                                        {filters.hlsFilter && <FilterPill label={filters.hlsFilter === 'transcoded' ? 'Transcoded' : 'Raw'} onRemove={() => handleRemoveFilter('hlsFilter')} color="green" />}
                                         {['studios','actors','characters','tags'].map(field => (
                                             <Fragment key={field}>
                                                 {(filters[field] || []).map(v => <FilterPill key={`inc-${v}`} label={`✓ ${v}`} onRemove={() => handleRemoveFilter(field, v)} color="green" />)}
@@ -705,26 +735,27 @@ function Home() {
                     <div className="flex-1 flex gap-2 items-center justify-between mb-4">
                         <div className="flex gap-1 bg-slate-900 p-1 rounded-lg shrink-0">
                             {/* Home tab */}
-                            <button
-                                onClick={() => navigate('/')}
+                            <Link
+                                to='/'
                                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition ${
                                     !adminView ? 'bg-red-500 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800'
                                 }`}
                             >
                                 <Layers className="w-4 h-4" />
                                 <span className="hidden md:block text-sm">Home</span>
-                            </button>
+                            </Link>
                             {/* Admin mode tabs */}
                             {ADMIN_MODES.map(({ value, label, icon: Icon }) => (
-                                <button key={value}
-                                    onClick={() => navigate(`/${value}`)}
+                                <Link 
+                                    key={value}
+                                    to={`/${value}`}
                                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition ${
                                         adminView === value ? 'bg-red-500 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800'
                                     }`}
                                 >
                                     {Icon && <Icon className="w-4 h-4" />}
                                     <span className="hidden md:block text-sm">{label}</span>
-                                </button>
+                                </Link>
                             ))}
                         </div>
 
@@ -803,7 +834,7 @@ function Home() {
                         {homeMode === 'detail' && (
                             <>
                                 {!seriesLoading && seriesList.length === 0 ? (
-                                    <EmptyState hasFilters={hasFilters} navigate={navigate} isAdmin={isAdmin} />
+                                    <EmptyState hasFilters={hasFilters} isAdmin={isAdmin} />
                                 ) : (
                                     <>
                                         {seriesLoading ? <LoadingSpinner /> : (
@@ -845,7 +876,7 @@ function Home() {
                                 </div>
 
                                 {filteredIsLoading ? <LoadingSpinner /> : filteredIsEmpty ? (
-                                    <EmptyState hasFilters={hasFilters} navigate={navigate} isAdmin={isAdmin} />
+                                    <EmptyState hasFilters={hasFilters} isAdmin={isAdmin} />
                                 ) : (
                                     <div className="space-y-10">
                                         {/* Videos */}
@@ -976,7 +1007,7 @@ function FilterPill({ label, onRemove, color = 'slate' }) {
         </button>
     );
 }
-function EmptyState({ hasFilters, navigate, isAdmin }) {
+function EmptyState({ hasFilters, isAdmin }) {
     return (
         <div className="flex flex-col items-center justify-center h-64 text-center px-4">
             <Film className="w-20 h-20 text-slate-700 mb-4" />
@@ -996,9 +1027,10 @@ function EmptyState({ hasFilters, navigate, isAdmin }) {
 export function AppHeader({ actions }) {
     const { user, isAdmin } = useAuth();
     const [showProfile, setShowProfile] = useState(false);
+    const headerVisible = useScrollHide();
     return (
         <>
-            <header className="sticky top-0 z-30 bg-slate-950/95 backdrop-blur-sm border-b border-slate-800">
+            <header className={`sticky top-0 z-30 bg-slate-950/95 backdrop-blur-sm border-b border-slate-800 transition-transform duration-300 ease-in-out ${headerVisible ? 'translate-y-0' : '-translate-y-full'}`}>
                 <div className="flex items-center justify-between gap-2 px-4 sm:px-6 py-2.5">
                     <Link to="/"
                         className="text-xl sm:text-2xl font-bold text-red-500 hover:text-red-400 transition shrink-0 tracking-tight">

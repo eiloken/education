@@ -7,6 +7,10 @@ import {
     Pencil, Lock, Unlock, ZoomIn, RefreshCw,
     LayoutGrid, AlignJustify, SlidersHorizontal,
     ArrowUpDown, Calendar, Star,
+    ScanSearch,
+    SquareCheck,
+    SquareDashed,
+    SquareCheckBig,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { albumAPI } from "../../api/api";
@@ -21,7 +25,7 @@ import { AppHeader } from "../Home";
     s.id = 'vf-anim';
     s.textContent = `
       @keyframes vf-in-down { from{transform:translateY(100%)} to{transform:translateY(0)} }
-      @keyframes vf-in-up   { from{transform:translateY(-100%)} to{transform:translateY(0)} }
+      @keyframes vf-in-up { from{transform:translateY(-100%)} to{transform:translateY(0)} }
     `;
     document.head.appendChild(s);
 })();
@@ -99,6 +103,19 @@ function TimerPicker({ currentTimer, onPick, onClose }) {
     );
 }
 
+function IBtn({ onClick, active = true, title, children, disabled }) {
+    if (disabled) return null;
+    return (
+        <button 
+            onClick={e => { e.stopPropagation(); onClick(); }}
+            className={`p-2.5 rounded-full transition ${active ? 'text-white' : 'text-white/50 hover:bg-white/10'}`}
+            title={title}
+        >
+            {children}
+        </button>
+    );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // IMAGE VIEWER
 // ─────────────────────────────────────────────────────────────────────────────
@@ -108,11 +125,9 @@ function ImageViewer({ images: initImages, initialIndex, onClose, onToggleImageF
     const [slideDir, setSlideDir] = useState(1);
     const [animKey, setAnimKey] = useState(0);
     const [zoom, setZoom] = useState(1);
-    const [pan, setPan] = useState({ x: 0, y: 0 });
 
     const [ctrlsOn, setCtrlsOn] = useState(true);
     const [locked, setLocked] = useState(false);
-    const [zoomLocked, setZoomLocked] = useState(false);
     const [ssPlaying, setSsPlaying] = useState(false);
     const [ssTimer, setSsTimer] = useState(10);
     const [showTimer, setShowTimer] = useState(false);
@@ -167,10 +182,12 @@ function ImageViewer({ images: initImages, initialIndex, onClose, onToggleImageF
         clearTimeout(hideT.current);
         hideT.current = setTimeout(() => setCtrlsOn(false), 3000);
     }, []);
+
     useEffect(() => {
         if (ssPlaying) { startHide(); } else { stopHide(); setCtrlsOn(true); }
         return () => stopHide();
     }, [ssPlaying, startHide, stopHide]);
+
     const onActivity = useCallback(() => {
         if (locked) return;
         setCtrlsOn(true);
@@ -180,7 +197,7 @@ function ImageViewer({ images: initImages, initialIndex, onClose, onToggleImageF
     // ── Reset / navigate ───────────────────────────────────────────────────────
     const resetView = useCallback(() => {
         panR.current = { x: 0, y: 0 }; zoomR.current = 1;
-        setZoom(1); setPan({ x: 0, y: 0 });
+        setZoom(1);
         applyTransform(0, 0, 1);
     }, [applyTransform]);
 
@@ -201,7 +218,8 @@ function ImageViewer({ images: initImages, initialIndex, onClose, onToggleImageF
         const id = setInterval(() => go(1), ssTimer * 1000);
         return () => clearInterval(id);
     }, [ssPlaying, ssTimer, go]);
-    useEffect(() => { if (ssPlaying && ssTimer > 0) setZoomLocked(true); }, [ssPlaying, ssTimer]);
+
+    const zoomLocked = useMemo(() => ssPlaying && ssTimer > 0, [ssPlaying, ssTimer]);
 
     // ── Favorite ───────────────────────────────────────────────────────────────
     const toggleFav = useCallback(async () => {
@@ -267,7 +285,7 @@ function ImageViewer({ images: initImages, initialIndex, onClose, onToggleImageF
             applyTransform(np.x, np.y, nz);
             el.style.cursor = nz > 1 ? 'grab' : 'default';
             clearTimeout(wheelSyncRef.current);
-            wheelSyncRef.current = setTimeout(() => { setZoom(nz); setPan({ x: np.x, y: np.y }); }, 150);
+            wheelSyncRef.current = setTimeout(() => { setZoom(nz); }, 150);
         };
         el.addEventListener('wheel', fn, { passive: false });
         return () => {
@@ -299,15 +317,14 @@ function ImageViewer({ images: initImages, initialIndex, onClose, onToggleImageF
             if (!mDown.current) return;
             mDown.current = false;
             el.style.cursor = zoomR.current > 1 ? 'grab' : 'default';
-            setPan({ ...panR.current });
         };
         el.addEventListener('mousedown', down);
         window.addEventListener('mousemove', move);
-        window.addEventListener('mouseup',   up);
+        window.addEventListener('mouseup', up);
         return () => {
             el.removeEventListener('mousedown', down);
             window.removeEventListener('mousemove', move);
-            window.removeEventListener('mouseup',   up);
+            window.removeEventListener('mouseup', up);
         };
     }, [zoomLocked, onActivity, applyTransform]);
 
@@ -359,7 +376,6 @@ function ImageViewer({ images: initImages, initialIndex, onClose, onToggleImageF
                 return;
             }
             if (gestRef.current === 'pan') {
-                setPan({ ...panR.current });
                 gestRef.current = null; tStart.current = null;
                 return;
             }
@@ -386,16 +402,6 @@ function ImageViewer({ images: initImages, initialIndex, onClose, onToggleImageF
     }, [zoomLocked, go, onActivity, applyTransform]);
 
     const img  = images[idx];
-    const show = ctrlsOn && !locked;
-    const anim = slideDir > 0 ? 'vf-in-down' : 'vf-in-up';
-
-    const IBtn = ({ onClick, active, title, children }) => (
-        <button onClick={e => { e.stopPropagation(); onClick(); }}
-            className={`p-2.5 rounded-full transition ${active ? 'bg-white/20 text-white' : 'text-white/70 hover:text-white hover:bg-white/10'}`}
-            title={title}>
-            {children}
-        </button>
-    );
 
     return (
         <div ref={viewerRef} className="fixed inset-0 z-50 bg-black select-none overflow-hidden">
@@ -403,7 +409,7 @@ function ImageViewer({ images: initImages, initialIndex, onClose, onToggleImageF
             <div className="absolute inset-0 overflow-hidden" style={{ isolation: 'isolate' }}>
                 {img && (
                     <div key={animKey} className="absolute inset-0 flex items-center justify-center"
-                        style={{ animation: `${anim} 0.26s cubic-bezier(0.25,0.46,0.45,0.94) both`, willChange: 'transform' }}>
+                        style={{ animation: `${slideDir > 0 ? 'vf-in-down' : 'vf-in-up'} 0.26s cubic-bezier(0.25,0.46,0.45,0.94) both`, willChange: 'transform' }}>
                         <img ref={imgRef} src={albumAPI.imageUrl(img.imagePath)} alt={img.title || ''}
                             draggable={false}
                             style={{
@@ -430,54 +436,66 @@ function ImageViewer({ images: initImages, initialIndex, onClose, onToggleImageF
             </div>
 
             {/* ── Filmstrip ────────────────────────────────────────────────── */}
+            {/*}
             <FilmStrip images={images} activeIdx={idx} visible={show}
                 onSelect={(i) => { setSlideDir(i > idx ? 1 : -1); setIdx(i); setAnimKey(k => k + 1); resetView(); }} />
+            {*/}
 
             {/* ── Right sidebar ────────────────────────────────────────────── */}
-            <div className={`absolute right-0 top-0 bottom-0 z-30 transition-opacity duration-300 ${show ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
-                <div className="flex flex-col items-center justify-between h-full py-3 px-1.5"
-                    style={{ background: 'linear-gradient(to left,rgba(0,0,0,.55),transparent)' }}>
-                    <div className="flex flex-col items-center gap-1.5">
-                        <button onClick={onClose} className="p-2.5 text-white/70 hover:text-white rounded-full transition">
-                            <X className="w-5 h-5" />
-                        </button>
-                        <span className="text-white/40 text-[10px] font-mono text-center leading-snug">
-                            {idx + 1}<br/><span className="text-white/25">/</span><br/>{imgCount}
-                        </span>
-                    </div>
+            <div className={`absolute right-0 top-0 bottom-0 z-30 transition-opacity duration-300 ${ctrlsOn ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+                <div className="flex flex-col items-center justify-between h-full py-3 px-1.5 bg-linear-to-l from-black/50 to-transparent">
+                    <IBtn
+                        onClick={onClose}
+                        disabled={locked}
+                    >
+                        <X className="w-5 h-5" />
+                    </IBtn>
                     <div className="flex flex-col items-center gap-1">
-                        <div className="flex flex-col items-center">
-                            <button onClick={toggleFav}
-                                className={`p-2.5 rounded-full transition ${img?.isFavorite ? 'text-red-500' : 'text-white/70 hover:text-white'}`}>
+                        <IBtn
+                            onClick={toggleFav}
+                            disabled={locked}
+                            title={img?.isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+                        >
+                            <div className={`flex flex-col items-center ${img?.isFavorite ? 'text-red-500' : ''}`}>
                                 <Heart className="w-6 h-6" fill={img?.isFavorite ? 'currentColor' : 'none'} />
-                            </button>
-                            {img?.views > 0 && <span className="text-white/30 text-[9px] -mt-1">{img.views}</span>}
-                        </div>
+                                {img?.views > 0 && <span className="text-white/70 text-[10px] mt-1">{img.views}</span>}
+                            </div>
+                        </IBtn>
                         <div className="relative">
                             {showTimer && (
-                                <TimerPicker currentTimer={ssTimer}
+                                <TimerPicker 
+                                    currentTimer={ssTimer}
                                     onPick={(s) => { setSsTimer(s); setSsPlaying(true); setShowTimer(false); }}
-                                    onClose={() => setShowTimer(false)} />
+                                    onClose={() => setShowTimer(false)} 
+                                />
                             )}
-                            <button onClick={e => { e.stopPropagation(); ssPlaying ? setSsPlaying(false) : setShowTimer(s => !s); }}
-                                className={`p-2.5 rounded-full transition ${ssPlaying ? 'bg-pink-600 text-white' : showTimer ? 'bg-white/20 text-white' : 'text-white/70 hover:text-white hover:bg-white/10'}`}
-                                title={ssPlaying ? 'Pause slideshow' : 'Start slideshow'}>
-                                {ssPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" fill="currentColor" />}
-                            </button>
+                            <IBtn
+                                onClick={() => ssPlaying ? setSsPlaying(false): setShowTimer(s => !s)}
+                                disabled={locked}
+                                title={ssPlaying ? 'Pause slideshow' : 'Start slideshow'}
+                            >
+                                {ssPlaying ? <Pause className="w-5 h-5 text-pink-600" /> : <Play className="w-5 h-5" fill="currentColor" />}
+                            </IBtn>
                         </div>
-                        <IBtn onClick={() => setZoomLocked(z => !z)} active={zoomLocked}
-                            title={zoomLocked ? 'Unlock zoom' : 'Ctrl+Wheel=zoom · Wheel=next/prev'}>
-                            <ZoomIn className={`w-5 h-5 ${zoomLocked ? 'opacity-50' : ''}`} />
-                        </IBtn>
                         {zoom !== 1 && (
-                            <IBtn onClick={resetView} title="Reset zoom (0)">
+                            <IBtn 
+                                onClick={resetView} 
+                                title="Reset zoom (0)"
+                            >
                                 <RotateCcw className="w-5 h-5" />
                             </IBtn>
                         )}
-                        <IBtn onClick={() => setLocked(true)} title="Lock controls (L)">
-                            <Lock className="w-5 h-5" />
+                        <IBtn 
+                            onClick={() => setLocked(l => !l)} 
+                            title={locked ? 'Unlock' : 'Lock'}
+                        >
+                            {locked ? <Lock className="w-5 h-5 text-amber-600" /> : <Unlock className="w-5 h-5" />}
                         </IBtn>
-                        <IBtn onClick={toggleFS} title="Fullscreen (F)">
+                        <IBtn 
+                            onClick={toggleFS} 
+                            disabled={locked}
+                            title="Fullscreen (F)"
+                        >
                             {isFS ? <Minimize2 className="w-5 h-5" /> : <Maximize2 className="w-5 h-5" />}
                         </IBtn>
                     </div>
@@ -489,14 +507,9 @@ function ImageViewer({ images: initImages, initialIndex, onClose, onToggleImageF
                 </div>
             </div>
 
-            {/* ── Locked overlay ───────────────────────────────────────────── */}
-            {locked && (
-                <button onClick={() => { setLocked(false); onActivity(); }}
-                    className="absolute top-3 right-3 z-50 p-2.5 bg-amber-500/20 hover:bg-amber-500/40 border border-amber-500/40 text-amber-400 rounded-xl transition"
-                    title="Unlock (Esc / L)">
-                    <Unlock className="w-5 h-5" />
-                </button>
-            )}
+            <div className="absolute bottom-2 left-2 text-white/70 text-xs font-mono text-center">
+                {idx + 1}/{imgCount}
+            </div>
         </div>
     );
 }
@@ -529,34 +542,34 @@ function LazyThumb({ src, alt, className, style }) {
 // GRID SIZE CONFIG
 // ─────────────────────────────────────────────────────────────────────────────
 const GRID_SIZES = [
-    { id: 'xl',  label: 'XL',  cols: 'grid-cols-1 sm:grid-cols-2 md:grid-cols-3' },
-    { id: 'lg',  label: 'L',   cols: 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4' },
-    { id: 'md',  label: 'M',   cols: 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5' },
-    { id: 'sm',  label: 'S',   cols: 'grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7' },
-    { id: 'xs',  label: 'XS',  cols: 'grid-cols-4 sm:grid-cols-6 md:grid-cols-7 lg:grid-cols-8 xl:grid-cols-10' },
+    { id: 'xl', label: 'XL', cols: 'grid-cols-1 sm:grid-cols-2 md:grid-cols-3' },
+    { id: 'lg', label: 'L', cols: 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4' },
+    { id: 'md', label: 'M', cols: 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5' },
+    { id: 'sm', label: 'S', cols: 'grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7' },
+    { id: 'xs', label: 'XS', cols: 'grid-cols-4 sm:grid-cols-6 md:grid-cols-7 lg:grid-cols-8 xl:grid-cols-10' },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SORT OPTIONS
 // ─────────────────────────────────────────────────────────────────────────────
 const SORT_OPTS = [
-    { id: 'order',     label: 'Default order' },
+    { id: 'order', label: 'Default order' },
     { id: 'date_desc', label: 'Newest first' },
-    { id: 'date_asc',  label: 'Oldest first' },
-    { id: 'views',     label: 'Most viewed' },
-    { id: 'fav',       label: 'Favorites first' },
-    { id: 'name',      label: 'Name A→Z' },
+    { id: 'date_asc', label: 'Oldest first' },
+    { id: 'views', label: 'Most viewed' },
+    { id: 'fav', label: 'Favorites first' },
+    { id: 'name', label: 'Name A→Z' },
 ];
 
 function sortImages(imgs, sortBy) {
     const a = [...imgs];
     switch (sortBy) {
         case 'date_desc': return a.sort((x, y) => new Date(y.createdAt) - new Date(x.createdAt));
-        case 'date_asc':  return a.sort((x, y) => new Date(x.createdAt) - new Date(y.createdAt));
-        case 'views':     return a.sort((x, y) => (y.views || 0) - (x.views || 0));
-        case 'fav':       return a.sort((x, y) => (y.isFavorite ? 1 : 0) - (x.isFavorite ? 1 : 0));
-        case 'name':      return a.sort((x, y) => (x.title || '').localeCompare(y.title || ''));
-        default:          return a;
+        case 'date_asc': return a.sort((x, y) => new Date(x.createdAt) - new Date(y.createdAt));
+        case 'views': return a.sort((x, y) => (y.views || 0) - (x.views || 0));
+        case 'fav': return a.sort((x, y) => (y.isFavorite ? 1 : 0) - (x.isFavorite ? 1 : 0));
+        case 'name': return a.sort((x, y) => (x.title || '').localeCompare(y.title || ''));
+        default: return a;
     }
 }
 
@@ -575,14 +588,14 @@ function groupByDate(imgs) {
 // ─────────────────────────────────────────────────────────────────────────────
 // IMAGE GRID ITEM  (memoised to avoid re-render of all siblings on selection)
 // ─────────────────────────────────────────────────────────────────────────────
-const GridItem = React.memo(function GridItem({ img, i, isSel, selectMode, onClick, onMouseDown, onMouseUp, onMouseLeave, onTouchStart, onTouchEnd, onTouchMove }) {
+const GridItem = React.memo(function GridItem({ img, isSel, selectMode, onClick, onMouseDown, onMouseUp, onMouseLeave, onTouchStart, onTouchEnd, onTouchMove }) {
     return (
         <div
-            onClick={(e) => onClick(i, e.shiftKey || e.metaKey || e.ctrlKey)}
-            onMouseDown={() => onMouseDown(i)}
+            onClick={onClick}
+            onMouseDown={onMouseDown}
             onMouseUp={onMouseUp}
             onMouseLeave={onMouseLeave}
-            onTouchStart={() => onTouchStart(i)}
+            onTouchStart={onTouchStart}
             onTouchEnd={onTouchEnd}
             onTouchMove={onTouchMove}
             className={`relative aspect-square rounded-lg overflow-hidden cursor-pointer group border-2 transition-all select-none ${isSel ? 'border-pink-500 ring-2 ring-pink-500/30' : 'border-transparent hover:border-slate-600'}`}
@@ -653,35 +666,62 @@ function DropConfirmModal({ files, onConfirm, onCancel }) {
     );
 }
 
+function RenderGrid({ imgs = [], selected = new Set(), selectMode = false, baseOffset = 0, colsCls, handleImgClick, onMouseDown, onMouseUp, onMouseLeave, onTouchStart, onTouchEnd, onTouchMove }) {
+    return (
+        <div className={`grid ${colsCls} gap-1.5`}>
+            {imgs.map((img, li) => {
+                const i = baseOffset + li;
+                return (
+                    <GridItem 
+                        key={img._id} 
+                        img={img}
+                        isSel={selected.has(img._id)} 
+                        selectMode={selectMode}
+                        onClick={(e) => handleImgClick(i, e.shiftKey)}
+                        onMouseDown={() => onMouseDown(i)}
+                        onMouseUp={onMouseUp}
+                        onMouseLeave={onMouseLeave}
+                        onTouchStart={() => onTouchStart(i)}
+                        onTouchEnd={onTouchEnd}
+                        onTouchMove={onTouchMove} 
+                    />
+                );
+            })}
+        </div>
+    );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // ALBUM DETAIL PAGE
 // ─────────────────────────────────────────────────────────────────────────────
 export default function AlbumDetail() {
-    const { id }   = useParams();
+    const { id } = useParams();
     const navigate = useNavigate();
     const { isAdmin } = useAuth();
 
-    const [album,   setAlbum]   = useState(null);
-    const [images,  setImages]  = useState([]);
+    const [album, setAlbum] = useState(null);
+    const [images, setImages] = useState([]);
     const [loading, setLoading] = useState(true);
 
     const [selectMode, setSelectMode] = useState(false);
-    const [selected,   setSelected]   = useState(new Set());
-    const lastClickIdx  = useRef(null);   // for shift-range select
+    const [selected, setSelected] = useState(new Set());
+    const lastClickIdx = useRef(null);   // for shift-range select
 
-    const [viewerOpen,   setViewerOpen]   = useState(false);
+    const [viewerOpen, setViewerOpen] = useState(false);
     const [viewerImages, setViewerImages] = useState([]);
-    const [viewerIndex,  setViewerIndex]  = useState(0);
+    const [viewerIndex, setViewerIndex] = useState(0);
 
-    const [uploading,   setUploading]   = useState(false);
-    const [showEdit,    setShowEdit]    = useState(false);
-    const [deleting,    setDeleting]    = useState(false);
+    const [uploading, setUploading] = useState(false);
+    const [showEdit, setShowEdit] = useState(false);
+    const [deleting, setDeleting] = useState(false);
     const uploadRef = useRef(null);
 
     // ── Drag-and-drop ──────────────────────────────────────────────────────────
-    const [dragging,    setDragging]    = useState(false);
-    const [dropFiles,   setDropFiles]   = useState(null);   // File[] pending confirm
+    const [dragging, setDragging] = useState(false);
+    const [dropFiles, setDropFiles] = useState(null);   // File[] pending confirm
     const dragCountRef = useRef(0);     // track nested drag events
+
+    const previousScrollPosRef = useRef(0);
 
     const isImageFiles = (dt) => [...(dt?.items || [])].some(i => i.kind === 'file' && i.type.startsWith('image/'));
 
@@ -709,10 +749,10 @@ export default function AlbumDetail() {
     }, [isAdmin]);
 
     // ── View options ───────────────────────────────────────────────────────────
-    const [gridSize,  setGridSize]  = useState('md');   // xl lg md sm xs
-    const [viewMode,  setViewMode]  = useState('normal'); // normal | grouped | sorted
-    const [sortBy,    setSortBy]    = useState('order');
-    const [showOpts,  setShowOpts]  = useState(false);
+    const [gridSize, setGridSize] = useState('md');   // xl lg md sm xs
+    const [viewMode, setViewMode] = useState('normal'); // normal | grouped | sorted
+    const [sortBy, setSortBy] = useState('order');
+    const [showOpts, setShowOpts] = useState(false);
     const optsRef = useRef(null);
 
     useEffect(() => {
@@ -773,9 +813,9 @@ export default function AlbumDetail() {
         lastClickIdx.current = idx;
     }, [displayImages]);
 
-    const selectAll   = () => { setSelected(new Set(displayImages.map(i => i._id))); lastClickIdx.current = null; };
+    const selectAll = () => { setSelected(new Set(displayImages.map(i => i._id))); lastClickIdx.current = null; };
     const deselectAll = () => { setSelected(new Set()); lastClickIdx.current = null; };
-    const exitSelect  = () => { setSelectMode(false); setSelected(new Set()); lastClickIdx.current = null; };
+    const exitSelect = () => { setSelectMode(false); setSelected(new Set()); lastClickIdx.current = null; };
 
     // ── Open viewer ────────────────────────────────────────────────────────────
     const openViewerFiltered = (startAt = 0) => {
@@ -786,14 +826,15 @@ export default function AlbumDetail() {
             setViewerImages(displayImages);
             setViewerIndex(startAt);
         }
+        previousScrollPosRef.current = window.scrollY;
         setViewerOpen(true);
-        if (selectMode) exitSelect();
     };
 
     const handleImgClick = useCallback((i, shiftHeld = false) => {
         if (selectMode) { toggleSelect(displayImages[i]._id, i, shiftHeld); return; }
         setViewerImages(displayImages);
         setViewerIndex(i);
+        previousScrollPosRef.current = window.scrollY;
         setViewerOpen(true);
     }, [selectMode, displayImages, toggleSelect]);
 
@@ -813,7 +854,7 @@ export default function AlbumDetail() {
             toast.success(`Uploaded ${res.count} image${res.count !== 1 ? 's' : ''}`);
             load();
         } catch (e) { toast.error(e?.response?.data?.error || 'Upload failed'); }
-        finally     { setUploading(false); }
+        finally { setUploading(false); }
     };
 
     const handleDeleteSelected = async () => {
@@ -840,51 +881,32 @@ export default function AlbumDetail() {
     const colsCls = GRID_SIZES.find(g => g.id === gridSize)?.cols ?? GRID_SIZES[2].cols;
 
     if (loading) return (
-        <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+        <div className="min-h-dvh bg-slate-950 flex items-center justify-center">
             <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-pink-500" />
         </div>
     );
 
     const hasImages = images.length > 0;
 
-    // ── Shared grid item event handlers (stable refs for memo) ─────────────────
-    const gridHandlers = {
-        onClick:      (i, e) => handleImgClick(i, e?.shiftKey),
-        onMouseDown:  (i)    => startLongPress(i),
-        onMouseUp:    ()     => cancelLongPress(),
-        onMouseLeave: ()     => cancelLongPress(),
-        onTouchStart: (i)    => startLongPress(i),
-        onTouchEnd:   ()     => cancelLongPress(),
-        onTouchMove:  ()     => cancelLongPress(),
-    };
-
-    // ── Render a flat grid of images ───────────────────────────────────────────
-    const renderGrid = (imgs, baseOffset = 0) => (
-        <div className={`grid ${colsCls} gap-1.5`}>
-            {imgs.map((img, li) => {
-                const i = baseOffset + li;
-                return (
-                    <GridItem key={img._id} img={img} i={i}
-                        isSel={selected.has(img._id)} selectMode={selectMode}
-                        onClick={handleImgClick}
-                        onMouseDown={gridHandlers.onMouseDown}
-                        onMouseUp={gridHandlers.onMouseUp}
-                        onMouseLeave={gridHandlers.onMouseLeave}
-                        onTouchStart={gridHandlers.onTouchStart}
-                        onTouchEnd={gridHandlers.onTouchEnd}
-                        onTouchMove={gridHandlers.onTouchMove} />
-                );
-            })}
-        </div>
-    );
+    if (viewerOpen) {
+        return (
+            <ImageViewer 
+                images={viewerImages} 
+                initialIndex={viewerIndex}
+                onClose={() => setViewerOpen(false)}
+                onToggleImageFavorite={handleImageFavToggle} 
+            />
+        );
+    }
 
     return (
-        <div className="min-h-screen bg-slate-950 relative"
+        <div
             onDragEnter={onDragEnter}
             onDragLeave={onDragLeave}
             onDragOver={onDragOver}
-            onDrop={onDrop}>
-
+            onDrop={onDrop}
+            className="h-dvh bg-slate-950 relative overflow-auto"
+        >
             {/* Drop overlay */}
             {dragging && (
                 <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-pink-900/60 backdrop-blur-sm border-4 border-dashed border-pink-400 pointer-events-none">
@@ -892,6 +914,7 @@ export default function AlbumDetail() {
                     <p className="text-white text-xl font-bold">Drop images to upload</p>
                 </div>
             )}
+            
             {/* ── Top Bar ───────────────────────────────────────────────────── */}
             <AppHeader
                 actions={isAdmin && (
@@ -938,10 +961,10 @@ export default function AlbumDetail() {
                             {album?.totalViews > 0 && <span className="flex items-center gap-1"><Eye className="w-3 h-3" />{album.totalViews.toLocaleString()} views</span>}
                         </div>
                         <div className="flex flex-wrap gap-1.5">
-                            {album?.studios?.map(s    => <Tag key={s} label={s} color="blue" />)}
-                            {album?.actors?.map(a     => <Tag key={a} label={a} color="green" />)}
+                            {album?.studios?.map(s => <Tag key={s} label={s} color="blue" />)}
+                            {album?.actors?.map(a => <Tag key={a} label={a} color="green" />)}
                             {album?.characters?.map(c => <Tag key={c} label={c} color="purple" />)}
-                            {album?.tags?.map(t       => <Tag key={t} label={t} color="slate" />)}
+                            {album?.tags?.map(t => <Tag key={t} label={t} color="slate" />)}
                         </div>
                     </div>
                     <button onClick={handleToggleAlbumFav}
@@ -966,66 +989,132 @@ export default function AlbumDetail() {
                     </div>
                 )}
 
-                {/* Toolbar */}
+                {/* Hint */}
                 {hasImages && (
-                    selectMode ? (
-                        <div className="flex items-center gap-2 flex-wrap p-3 bg-slate-800/70 border border-slate-700 rounded-xl">
+                    <p className="text-slate-600 text-xs">
+                        {selectMode
+                            ? 'Tap to toggle · Shift+click to range-select · Long-press on mobile'
+                            : 'Tap to view · Long-press or click Select to multi-select'}
+                    </p>
+                )}
+
+                {/* Image Grid — normal or sorted */}
+                {hasImages && viewMode !== 'grouped' && (
+                    <RenderGrid 
+                        imgs={displayImages}
+                        colsCls={colsCls}
+                        handleImgClick={handleImgClick}
+                        onMouseDown={startLongPress}
+                        onMouseLeave={cancelLongPress}
+                        onMouseUp={cancelLongPress}
+                        onTouchStart={startLongPress}
+                        onTouchEnd={cancelLongPress}
+                        onTouchMove={cancelLongPress}
+                        selectMode={selectMode}
+                        selected={selected}
+                    />
+                )}
+
+                {/* Image Grid — grouped by date */}
+                {hasImages && viewMode === 'grouped' && (() => {
+                    let offset = 0;
+                    return groupedImages.map(([dateLabel, imgs]) => {
+                        const base = offset;
+                        offset += imgs.length;
+                        return (
+                            <div key={dateLabel} className="space-y-2">
+                                <div className="flex items-center gap-2">
+                                    <Calendar className="w-3.5 h-3.5 text-slate-500" />
+                                    <span className="text-slate-400 text-sm font-medium">{dateLabel}</span>
+                                    <span className="text-slate-600 text-xs">({imgs.length})</span>
+                                    <div className="flex-1 h-px bg-slate-800" />
+                                </div>
+                                <RenderGrid 
+                                    imgs={imgs}
+                                    baseOffset={base}
+                                    colsCls={colsCls}
+                                    handleImgClick={handleImgClick}
+                                    onMouseDown={startLongPress}
+                                    onMouseLeave={cancelLongPress}
+                                    onMouseUp={cancelLongPress}
+                                    onTouchStart={startLongPress}
+                                    onTouchEnd={cancelLongPress}
+                                    onTouchMove={cancelLongPress}
+                                    selectMode={selectMode}
+                                    selected={selected}
+                                />
+                            </div>
+                        );
+                    });
+                })()}
+            </div>
+
+            {/* Toolbar */}
+            {hasImages && (
+                <div className="sticky bottom-4 left-8 w-[calc(100dvw-4rem)] flex items-center gap-1 p-2 sm:gap-2 sm:p-3 bg-slate-800/70 border border-slate-700 rounded-xl z-50 @container">
+                    {selectMode ? (
+                        <>
                             <span className="text-white text-sm font-medium">{selected.size} selected</span>
-                            <button onClick={selectAll}
-                                className="px-2.5 py-1.5 bg-slate-700 hover:bg-slate-600 text-white text-xs rounded-lg transition">All ({displayImages.length})</button>
-                            <button onClick={deselectAll}
-                                className="px-2.5 py-1.5 bg-slate-700 hover:bg-slate-600 text-white text-xs rounded-lg transition">None</button>
+                            <button 
+                                onClick={() => selected.size > 0 ? deselectAll() : selectAll()}
+                                className="flex items-center gap-1.5 p-1.5 @xl:px-2.5 @xl:py-1.5 bg-slate-600 hover:bg-slate-500 text-white text-xs rounded-lg transition whitespace-nowrap"
+                            >
+                                {selected.size > 0 ? <SquareDashed className="w-3 h-3" /> : <SquareCheckBig className="w-3 h-3"/>}
+                                <span className="hidden @xl:inline whitespace-nowrap">
+                                    {selected.size > 0 ? 'None' : `Select All (${displayImages.length})`}
+                                </span>
+                            </button>
                             <div className="flex-1" />
                             <button 
                                 onClick={() => openViewerFiltered()}
-                                className="flex items-center gap-1.5 px-3 py-1.5 bg-pink-600 hover:bg-pink-500 text-white text-xs rounded-lg font-medium transition"
+                                className="flex items-center gap-1.5 p-1.5 @xl:px-2.5 @xl:py-1.5 bg-pink-600 hover:bg-pink-500 text-white text-xs rounded-lg font-medium transition"
                             >
                                 <Play className="w-3 h-3" fill="currentColor" />
-                                <span className="hidden sm:inline">
+                                <span className="hidden @xl:inline whitespace-nowrap">
                                     {selected.size > 0 ? `View (${selected.size})` : 'View All'}
                                 </span>
                             </button>
                             <button 
                                 onClick={() => albumAPI.downloadAlbum(id, selected.size ? [...selected] : null)} 
                                 disabled={!selected.size}
-                                className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs rounded-lg font-medium transition"
+                                className="flex items-center gap-1.5 p-1.5 @xl:px-2.5 @xl:py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs rounded-lg font-medium transition"
                             >
                                 <Download className="w-3 h-3" />
-                                <span className="hidden sm:inline">
+                                <span className="hidden @xl:inline whitespace-nowrap">
                                     {selected.size > 1 ? `ZIP (${selected.size})` : 'Download'}
                                 </span>
                             </button>
                             {isAdmin && (
                                 <button onClick={handleDeleteSelected} disabled={!selected.size}
-                                    className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white text-xs rounded-lg font-medium transition">
+                                    className="flex items-center p-1.5 @xl:px-2.5 @xl:py-1.5 bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white text-xs rounded-lg font-medium transition">
                                     <Trash2 className="w-3 h-3" />
-                                    <span className="hidden sm:inline">
+                                    <span className="hidden @xl:inline">
                                         Delete
                                     </span>
                                 </button>
                             )}
                             <button onClick={exitSelect} className="p-1.5 text-slate-400 hover:text-white rounded-lg transition"><X className="w-4 h-4" /></button>
-                        </div>
+                        </>
                     ) : (
-                        <div className="flex items-center gap-2 flex-wrap">
+                        <>
                             <button onClick={() => setSelectMode(true)}
-                                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 border border-slate-700 text-slate-300 hover:text-white text-sm rounded-lg transition">
+                                className="flex items-center p-1.5 @xl:px-2.5 @xl:py-1.5 bg-slate-800 border border-slate-700 text-slate-300 hover:text-white text-sm rounded-lg transition">
                                 <CheckSquare className="w-4 h-4" />
-                                <span className="hidden sm:inline">
+                                <span className="hidden @xl:inline">
                                     Select
                                 </span>
                             </button>
                             <button onClick={() => albumAPI.downloadAlbum(id)}
-                                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 border border-slate-700 text-slate-300 hover:text-white text-sm rounded-lg transition">
+                                className="flex items-center p-1.5 @xl:px-2.5 @xl:py-1.5 bg-slate-800 border border-slate-700 text-slate-300 hover:text-white text-sm rounded-lg transition">
                                 <Download className="w-4 h-4" />
-                                <span className="hidden sm:inline">
+                                <span className="hidden @xl:inline">
                                     Download All
                                 </span>
                             </button>
                             <button onClick={() => openViewerFiltered(0)}
-                                className="flex items-center gap-1.5 px-3 py-1.5 bg-pink-600 hover:bg-pink-500 text-white text-sm rounded-lg font-medium transition">
+                                className="flex items-center p-1.5 @xl:px-2.5 @xl:py-1.5 bg-pink-600 hover:bg-pink-500 text-white text-sm rounded-lg font-medium transition">
                                 <Play className="w-4 h-4" fill="currentColor" />
-                                <span className="hidden sm:inline">
+                                <span className="hidden @xl:inline">
                                     View All
                                 </span>
                             </button>
@@ -1037,7 +1126,7 @@ export default function AlbumDetail() {
                                 <button onClick={() => setShowOpts(o => !o)}
                                     className={`flex items-center gap-1.5 px-3 py-1.5 border text-sm rounded-lg transition ${showOpts ? 'bg-slate-700 border-slate-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-300 hover:text-white'}`}>
                                     <SlidersHorizontal className="w-4 h-4" />
-                                    <span className="hidden sm:inline">
+                                    <span className="hidden @xl:inline">
                                         Options
                                     </span>
                                 </button>
@@ -1098,56 +1187,25 @@ export default function AlbumDetail() {
                                     </div>
                                 )}
                             </div>
-                        </div>
-                    )
-                )}
-
-                {/* Hint */}
-                {hasImages && (
-                    <p className="text-slate-600 text-xs">
-                        {selectMode
-                            ? 'Tap to toggle · Shift+click to range-select · Long-press on mobile'
-                            : 'Tap to view · Long-press or click Select to multi-select'}
-                    </p>
-                )}
-
-                {/* Image Grid — normal or sorted */}
-                {hasImages && viewMode !== 'grouped' && renderGrid(displayImages, 0)}
-
-                {/* Image Grid — grouped by date */}
-                {hasImages && viewMode === 'grouped' && (() => {
-                    let offset = 0;
-                    return groupedImages.map(([dateLabel, imgs]) => {
-                        const base = offset;
-                        offset += imgs.length;
-                        return (
-                            <div key={dateLabel} className="space-y-2">
-                                <div className="flex items-center gap-2">
-                                    <Calendar className="w-3.5 h-3.5 text-slate-500" />
-                                    <span className="text-slate-400 text-sm font-medium">{dateLabel}</span>
-                                    <span className="text-slate-600 text-xs">({imgs.length})</span>
-                                    <div className="flex-1 h-px bg-slate-800" />
-                                </div>
-                                {renderGrid(imgs, base)}
-                            </div>
-                        );
-                    });
-                })()}
-            </div>
-
-            {viewerOpen && (
-                <ImageViewer images={viewerImages} initialIndex={viewerIndex}
-                    onClose={() => setViewerOpen(false)}
-                    onToggleImageFavorite={handleImageFavToggle} />
+                        </>
+                    )}
+                </div>
             )}
+
             {showEdit && (
-                <AlbumFormModal album={album} onSaved={() => { setShowEdit(false); load(); }} onClose={() => setShowEdit(false)} />
+                <AlbumFormModal 
+                    album={album} 
+                    onSaved={() => { setShowEdit(false); load(); }} 
+                    onClose={() => setShowEdit(false)} 
+                />
             )}
+
             {dropFiles && (
                 <DropConfirmModal
                     files={dropFiles}
                     onConfirm={() => { handleUpload(dropFiles); setDropFiles(null); }}
-                    onCancel={() => setDropFiles(null)} />
+                    onCancel={() => setDropFiles(null)} 
+                />
             )}
         </div>
     );

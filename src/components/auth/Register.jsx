@@ -25,7 +25,7 @@ export default function Register({ onShowLogin }) {
     };
 
     return (
-        <div className="min-h-screen bg-slate-950 flex items-center justify-center px-4">
+        <div className="min-h-dvh bg-slate-950 flex items-center justify-center px-4">
             <div className="w-full max-w-sm p-4">
                 {/* Logo */}
                 <div className="text-center mb-8 flex items-center justify-center gap-4">

@@ -297,8 +297,7 @@ export function SeriesDetail() {
 
     // ── Render ────────────────────────────────────────────────────────────────
     return (
-        <div className="min-h-screen bg-slate-950 text-white">
-
+        <div className="min-h-dvh bg-slate-950 text-white">
             {/* ── Header ──────────────────────────────────────────────────────── */}
             <AppHeader />
 
@@ -1100,7 +1099,7 @@ function IconBtn({ onClick, title, danger = false, children }) {
 // ─── Screen helpers ───────────────────────────────────────────────────────────
 function LoadingScreen() {
     return (
-        <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+        <div className="min-h-dvh bg-slate-950 flex items-center justify-center">
             <div className="w-10 h-10 rounded-full border-2 border-slate-800 border-t-red-500 animate-spin" />
         </div>
     );
@@ -1109,7 +1108,7 @@ function LoadingScreen() {
 function NotFoundScreen({ message }) {
     const navigate = useNavigate();
     return (
-        <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-white gap-4">
+        <div className="min-h-dvh bg-slate-950 flex flex-col items-center justify-center text-white gap-4">
             <Film className="w-14 h-14 text-slate-800" />
             <p className="text-lg text-slate-400">{message}</p>
             <button

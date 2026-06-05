@@ -57,7 +57,7 @@ export default function ChangePassword() {
 
     if (success) {
         return (
-            <div className="min-h-screen bg-slate-950 flex items-center justify-center px-4">
+            <div className="min-h-dvh bg-slate-950 flex items-center justify-center px-4">
                 <div className="text-center">
                     <CheckCircle2 className="w-14 h-14 text-green-400 mx-auto mb-4" />
                     <h2 className="text-white text-xl font-semibold mb-2">Password updated!</h2>
@@ -68,7 +68,7 @@ export default function ChangePassword() {
     }
 
     return (
-        <div className="min-h-screen bg-slate-950 flex items-center justify-center px-4">
+        <div className="min-h-dvh bg-slate-950 flex items-center justify-center px-4">
             <div className="w-full max-w-sm">
                 <div className="text-center mb-8">
                     <div className="inline-flex items-center justify-center w-16 h-16 bg-red-500/10 border border-red-500/20 rounded-2xl mb-4">

@@ -256,14 +256,14 @@ function CreateSeries({ mode = 'create' }) {
 
     if (pageLoading) {
         return (
-            <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+            <div className="min-h-dvh bg-slate-950 flex items-center justify-center">
                 <Loader2 className="w-10 h-10 animate-spin text-red-500" />
             </div>
         );
     }
 
     return (
-        <div className="min-h-screen bg-slate-950 text-white px-4 sm:px-6">
+        <div className="min-h-dvh bg-slate-950 text-white px-4 sm:px-6">
             {/* Header */}
             <header className="sticky top-0 z-30 bg-slate-950/95 backdrop-blur-sm border-b border-slate-800">
                 <div className="mx-auto p-4 overflow-hidden">

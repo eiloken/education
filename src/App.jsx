@@ -46,7 +46,7 @@ function AdminRoute({ children }) {
 function App() {
   return (
     <BrowserRouter>
-      <div className="min-h-screen bg-slate-900">
+      <div className="min-h-dvh bg-slate-900">
         <AuthGate>
           <Routes>
             <Route path="/" element={<Home />} />
@@ -69,7 +69,7 @@ function App() {
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </AuthGate>
-        <Toaster position="top-right" />
+        <Toaster position="bottom-right" />
       </div>
     </BrowserRouter>
   );
